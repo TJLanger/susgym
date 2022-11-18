@@ -1,2 +1,2 @@
 # susgym
-OpenAI gym implementation of the board game Suspicion
+Environment and agents for the board game Suspicion, specifically focused on OpenAI gym
