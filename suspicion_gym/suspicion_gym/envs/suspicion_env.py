@@ -1,5 +1,6 @@
 import gym
 
+import itertools
 import numpy as np
 
 import time
@@ -53,11 +54,12 @@ class SuspicionEnv(gym.Env):
             self.__agent_kbs[i,:,self.__charAssigns[i]] = 0
         # State Init
         self.__player_turn = np.random.randint(0, self.__num_players)
-        self.__state = None
+        self.__state = self._init_state()
         # Return
         return self.__state
 
     def observe(self):
+        self._personalize_state(self.__state) # Update for specific player before returning
         return self.__player_turn, self.__state
 
     def step(self, action):
@@ -65,12 +67,11 @@ class SuspicionEnv(gym.Env):
         # Validate Action
         if not self.action_space.contains(action):
             raise Exception("Invalid Action (%s)" % str(action)) # error out -> didnt meet act space rules
-        elif True: # func to validate act choice based on state
+        elif False: # self._validate_action(action): # func to validate act choice based on state
             ### Todo: Counter and error if same bad action given N times?
-            raise Exception("Invalid Action (%s)" % str(action)) # error out -> didnt meet act space rules
             return self.__state, -1, False, {} # Return negative reward, do not update state or turn, force agent to repick and learn
         # Perform Action
-        obs, reward, done = None, None, None
+        obs, reward, done = None, None, None # self._apply_action(action)
         info = {}
         self.__player_turn = self.__player_turn + 1 if self.__player_turn < self.__num_players else 0
         # Return
@@ -286,3 +287,72 @@ class SuspicionEnv(gym.Env):
                 obs_limits.append(2) # 1hot for each possible character
         # Return
         return np.array(obs_limits)
+
+    """
+    description:
+    -> Creates a starting valid state
+    parameters:
+    -> num_characters (From susEnv object)
+    -> num_players (From susEnv object)
+    -> board_width (From susEnv object)
+    -> board_height (From susEnv object)
+    return:
+    -> Numpy tensor representing a valid initial board state
+    """
+    def _init_state(self):
+        # Setup
+        idx = 0 # variable to help set state values in loops/etc
+        state = np.zeros(self.observation_space.shape, dtype=np.int8)
+        char_x, char_y = 0, 0
+        # Set Values
+        ### state[idx] = self.__player_turn # turn indicator (disabled)
+        ### idx += 1
+        idx += 1 # invite deck index already set to 0, skip variable
+        state[idx:idx+3] = self._gen_max_gems() # gem counts for the bank / starting piles
+        idx += 3
+        for player_idx in range(self.__num_players):
+            idx += 3 # player gem counts already set to 0, skip variables
+        for char_idx in itertools.chain(self.__charAssigns, self.__inviteDeck):
+            # set state values
+            state[idx] = char_x
+            state[idx+1] = char_y
+            # update iterators
+            idx += 2
+            char_x = char_x + 1 if char_x < self.__dynSus_boardWidth - 1 else 0
+            if char_y == 1 and char_x > 0: char_x = self.__dynSus_boardWidth - 1
+            if char_x == 0: char_y += 1
+        for die_num in range(2):
+            state[idx] = np.random.randint(0, 6)
+            idx += 1
+        # Apply player specific info
+        self._personalize_state(state)
+        # return
+        return state
+
+    """
+    description:
+    -> apply player specific state info to a given state reference
+    parameters:
+    -> num_characters (From susEnv object)
+    -> num_players (From susEnv object)
+    -> board_width (From susEnv object)
+    -> board_height (From susEnv object)
+    return:
+    -> No return. In place modification of given state reference
+    """
+    def _personalize_state(self, state):# TODO: validate against board/stat
+        # Setup
+        player_state = []
+        player_char = self.__charAssigns[self.__player_turn]
+        # Room Gems
+        room_idx = 1 + 3 + 3*self.__num_players + 2*player_char
+        room_gems = self.__board[state[room_idx]][state[room_idx+1]]
+        player_state.extend(room_gems)
+        # Action Cards
+        for card in self.__agent_cards[self.__player_turn]:
+            player_state.extend(card)
+        # Knowledge Base
+        for kb in self.__agent_kbs[self.__player_turn]:
+            player_state.extend(kb)
+        # Modification
+        state[-len(player_state):] = np.array(player_state, dtype=np.int8)
