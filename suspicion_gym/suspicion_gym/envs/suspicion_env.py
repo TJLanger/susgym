@@ -1,6 +1,7 @@
 import gym
 
 import itertools
+import math
 import numpy as np
 
 import time
@@ -9,7 +10,7 @@ from tkinter import font
 from PIL import Image,ImageTk
 
 class SuspicionEnv(gym.Env):
-    def __init__(self, num_players, gui_size=None, gui_delay=0):
+    def __init__(self, num_players, gui_size=None, gui_delay=0, debug=False):
         super(SuspicionEnv, self).__init__()
         # Game Options
         self.__dynSus_numCharacters = 10
@@ -19,6 +20,7 @@ class SuspicionEnv(gym.Env):
         self.__dynSus_boardHeight = 3
         # Paremterized Options
         self.__num_players = num_players
+        self.__debug = debug
         # OpenAI Gym Setup
         self.action_space = gym.spaces.MultiDiscrete(self._gen_act_limits())
         self.observation_space = gym.spaces.MultiDiscrete(self._gen_obs_limits())
@@ -55,6 +57,7 @@ class SuspicionEnv(gym.Env):
         # State Init
         self.__player_turn = np.random.randint(0, self.__num_players)
         self.__state = self._init_state()
+        self.render()
         # Return
         return self.__state
 
@@ -66,10 +69,11 @@ class SuspicionEnv(gym.Env):
         # Setup
         # Validate Action
         if not self.action_space.contains(action):
-            raise Exception("Invalid Action (%s)" % str(action)) # error out -> didnt meet act space rules
-        elif False: # self._validate_action(action): # func to validate act choice based on state
+            raise Exception("Out of Space Action (%s)" % str(action)) # error out -> didnt meet act space rules
+        elif not self._validate_action(action): # func to validate act choice based on state
             ### Todo: Counter and error if same bad action given N times?
-            return self.__state, -1, False, {} # Return negative reward, do not update state or turn, force agent to repick and learn
+            ###return self.__state, -1, False, {} # Return negative reward, do not update state or turn, force agent to repick and learn
+            raise Exception("Invalid Action (%s)" % str(action)) # error out -> didnt meet act space rules
         # Perform Action
         obs, reward, done = None, None, None # self._apply_action(action)
         info = {}
@@ -85,6 +89,39 @@ class SuspicionEnv(gym.Env):
                 # Draw
                 # Human Viewing Delay
                 time.sleep(self.gui_delay)
+            elif self.__debug:
+                dbg_idx = 0
+                print("Players: (%s)" % str(list(range(self.__num_players))))
+                print("Turn: %s" % str(self.__player_turn))
+                print("Invite Deck Index: %s" % str(self.__state[dbg_idx]))
+                dbg_idx += 1
+                print("Remaining gems: %s" % str(self.__state[dbg_idx:dbg_idx+3]))
+                dbg_idx += 3
+                for player_idx in range(self.__num_players):
+                    print("Player %s:" % str(player_idx))
+                    print("\tGems: %s" % str(self.__state[dbg_idx:dbg_idx+3]))
+                    print("\tCards: %s" % str(self.__agent_cards[player_idx]))
+                    player_char = self.__charAssigns[player_idx]
+                    print("\tCharacter: (%s, %s)" % (str(player_char),str(self.__dynSus_charNames[player_char])))
+                    dbg_idx += 3
+                print("Character locations:")
+                for char_idx in range(self.__dynSus_numCharacters):
+                    tabs = "\t" if len(str(self.__dynSus_charNames[char_idx])) > 17 else "\t\t"
+                    print("\t(%s, %s):%s%s" % (str(char_idx),str(self.__dynSus_charNames[char_idx]),tabs,self.__state[dbg_idx:dbg_idx+2]))
+                    dbg_idx += 2
+                print("Die Rolls: (%s)" % str(list(map(lambda x: str(x)+":"+self.__dynSus_charNames[x], list(self.__state[dbg_idx:dbg_idx+2])))))
+                dbg_idx += 2
+                print("Player Specific State:")
+                print("\tRoom Gems: %s" % self.__state[dbg_idx:dbg_idx+3])
+                dbg_idx += 3
+                print("\tCards: (%s, %s)" % (self.__state[dbg_idx:dbg_idx+16], self.__state[dbg_idx+16:dbg_idx+32]))
+                dbg_idx += 32
+                print("\tKnowledge:")
+                while dbg_idx < len(self.__state):
+                    print("\t\tOpp: %s" % (str(self.__state[dbg_idx:dbg_idx+self.__dynSus_numCharacters])))
+                    dbg_idx += self.__dynSus_numCharacters
+                print("\n\n\n")
+
 
     def cleanup(self):
         if self.gui is not None:
@@ -102,7 +139,19 @@ class SuspicionEnv(gym.Env):
         characters = []
         deck = list(range(self.__dynSus_numCharacters))
         if self.__dynSus_numCharacters == 10:
-            self.__dynSus_charNames = ("Buford Barnswallow", "Dr. Ashraf Najem", "Earl of Volesworthy", "Lily Nesbitt", "Mildred Wellington", "Nadia Bwalya", "Remy La Rocque", "Stefano Laconi", "Trudie Mudge", "Viola Chung")
+            self.__dynSus_charNames = ("Buford Barnswallow", "Dr. Ashraf Najem", "Earl of Volesworthy", "Lily Nesbitt", "Mildred Wellington", "Nadia Bwalya", "Remy La Rocque", "Stefano Laconi", "Trudie Mudge", "Viola Chung", "?")
+            self.__die1_lup = (6,3,7,5,8,self.__dynSus_numCharacters)
+            self.__die2_lup = (4,2,0,1,9,self.__dynSus_numCharacters)
+        else:
+            auto_names = list(map(lambda x: "Char"+str(x), list(range(self.__dynSus_numCharacters))))
+            auto_names.append("?")
+            self.__dynSus_charNames = tuple(auto_names)
+            die1 = list(range(0, math.floor(self.__dynSus_numCharacters/2)))
+            die1.append(self.__dynSus_numCharacters)
+            self.__die1_lup = tuple(die1)
+            die2 = list(range(math.floor(self.__dynSus_numCharacters/2), self.__dynSus_numCharacters))
+            die2.append(self.__dynSus_numCharacters)
+            self.__die2_lup = tuple(die2)
         # Assign Characters
         for player_idx in range(self.__num_players):
             char_idx = np.random.randint(0, len(deck))
@@ -275,8 +324,8 @@ class SuspicionEnv(gym.Env):
         for char_idx in range(self.__dynSus_numCharacters): # character locations x/y
             obs_limits.append(self.__dynSus_boardWidth)
             obs_limits.append(self.__dynSus_boardHeight)
-        obs_limits.append(6) # die1 roll
-        obs_limits.append(6) # die2 roll
+        obs_limits.append(self.__dynSus_numCharacters+1) # die1 roll, num characters + '?' possible
+        obs_limits.append(self.__dynSus_numCharacters+1) # die2 roll
         obs_limits.append(2) # red gem in room flag
         obs_limits.append(2) # green gem in room flag
         obs_limits.append(2) # yellow gem in room flag
@@ -314,15 +363,20 @@ class SuspicionEnv(gym.Env):
             idx += 3 # player gem counts already set to 0, skip variables
         for char_idx in itertools.chain(self.__charAssigns, self.__inviteDeck):
             # set state values
-            state[idx] = char_x
-            state[idx+1] = char_y
+            state[idx+2*char_idx] = char_x
+            state[idx+2*char_idx+1] = char_y
             # update iterators
-            idx += 2
             char_x = char_x + 1 if char_x < self.__dynSus_boardWidth - 1 else 0
             if char_y == 1 and char_x > 0: char_x = self.__dynSus_boardWidth - 1
             if char_x == 0: char_y += 1
+        idx += 2*self.__dynSus_numCharacters
         for die_num in range(2):
-            state[idx] = np.random.randint(0, 6)
+            if die_num == 0:
+                roll = np.random.randint(0, math.floor(self.__dynSus_numCharacters/2)+1) # standard 1-> 6 roll, need to lookup chars
+                state[idx] = self.__die1_lup[roll]
+            else:
+                roll = np.random.randint(0, math.ceil(self.__dynSus_numCharacters/2)+1) # standard 1-> 6 roll, need to lookup chars
+                state[idx] = self.__die2_lup[roll]
             idx += 1
         # Apply player specific info
         self._personalize_state(state)
@@ -356,3 +410,61 @@ class SuspicionEnv(gym.Env):
             player_state.extend(kb)
         # Modification
         state[-len(player_state):] = np.array(player_state, dtype=np.int8)
+
+    """
+    description:
+    -> checks if a given action is valid for the current game state
+    parameters:
+    -> state (From susEnv object)
+    -> action
+    return:
+    -> isValid, boolean indicating if action was valid or not
+    """
+    def _validate_action(self, action):
+        # setup
+        act_idx = 0
+        state_idx = 1 # skip invite idx in state, start at gem counts
+        ### state_idx = 2 # bigger skip if using turn indicator in state
+        # Get State info
+        bank_gems = self.__state[state_idx:state_idx+3]
+        for player_idx in range(self.__num_players+1):
+            state_idx += 3 # increment past gem counts for bank and all players
+        char_locs = self.__state[state_idx:state_idx+2*self.__dynSus_numCharacters]
+        state_idx += 2*self.__dynSus_numCharacters
+        die_rolls = self.__state[state_idx:state_idx+2]
+        state_idx += 2
+        room_gems = self.__state[state_idx:state_idx+3]
+        state_idx += 3
+        act_cards = []
+        for card in range(2):
+            act_cards.append(self.__state[state_idx:state_idx+16])
+            state_idx += 16
+        # Check Die Moves
+        for die in range(2):
+            # Setup
+            die_move = action[act_idx:act_idx+3] # char, new_x, new_y
+            act_idx += 3
+            # Check on board
+            if die_move[1] < 0 or die_move[1] >= self.__dynSus_boardWidth or die_move[2] < 0 or die_move[2] >= self.__dynSus_boardHeight:
+                return False
+            # Check Move
+            if die_move[0] in die_rolls:
+                die_rolls = np.delete(die_rolls, np.where(die_rolls == die_move[0])[0][0])
+                if die_move[1] == char_locs[2*die_move[0]] and ((die_move[2] == char_locs[2*die_move[0]+1] - 1) or (die_move[2] == char_locs[2*die_move[0]+1] + 1)):
+                    char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                elif die_move[2] == char_locs[2*die_move[0]+1] and ((die_move[1] == char_locs[2*die_move[0]] - 1) or (die_move[1] == char_locs[2*die_move[0]] + 1)):
+                    char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                else:
+                    return False
+            elif self.__dynSus_numCharacters in die_rolls:
+                die_rolls = np.delete(die_rolls, np.where(die_rolls == self.__dynSus_numCharacters)[0][0])
+                if die_move[1] == char_locs[2*die_move[0]] and ((die_move[2] == char_locs[2*die_move[0]+1] - 1) or (die_move[2] == char_locs[2*die_move[0]+1] + 1)):
+                    char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                elif die_move[2] == char_locs[2*die_move[0]+1] and ((die_move[1] == char_locs[2*die_move[0]] - 1) or (die_move[1] == char_locs[2*die_move[0]] + 1)):
+                    char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                else:
+                    return False
+            else:
+                return False # attempted to move invalid character
+        # Return Valid
+        return True
