@@ -28,7 +28,7 @@
 # OpenAI gym
 import gym
 from suspicion_gym import suspicion_gym
-from agents.rand_agent import randAgent
+from agents.rand_agent import randAgent, randSusAgent
 
 # Other
 import argparse
@@ -91,9 +91,9 @@ def playSuspicion(num_players=4, gui=False, episodes=1, debug=False):
     max_step = None
     # create env
     susEnv = gym.make("Suspicion-v1", num_players=num_players,
-        gui_size=gui_size, gui_delay=1)
+        gui_size=gui_size, gui_delay=1, debug=debug)
     # create agents
-    agents = [randAgent() for i in range(num_players)]
+    agents = [randSusAgent(num_players) for i in range(num_players)]
     rewards = [[] for i in range(len(agents))]
     # loop epochs
     starttime = time.time()
