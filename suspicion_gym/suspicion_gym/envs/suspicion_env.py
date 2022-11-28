@@ -54,6 +54,7 @@ class SuspicionEnv(gym.Env):
             self.__agent_cards[i].append(self.__cards.pop(card_idx))
             # Update Knowledge Base
             self.__agent_kbs[i,:,self.__charAssigns[i]] = 0
+        self.__agent_cards = np.array(self.__agent_cards)
         # State Init
         self.__player_turn = np.random.randint(0, self.__num_players)
         self.__state = self._init_state()
@@ -77,7 +78,7 @@ class SuspicionEnv(gym.Env):
         # Perform Action
         reward, done = self._apply_action(action) # Also modifies state (in place)
         info = {}
-        self.__player_turn = self.__player_turn + 1 if self.__player_turn < self.__num_players else 0
+        self.__player_turn = self.__player_turn + 1 if self.__player_turn < self.__num_players - 1 else 0
         # Return
         return self.__state.copy(), reward, done, info
 
@@ -497,6 +498,7 @@ class SuspicionEnv(gym.Env):
                     print("Bad Trapdoor")
                     return False
         else: # Only need identity guesses
+            print("TODO: Setup Identity Guessing")
             return False
         # Return Valid
         return True
@@ -540,9 +542,9 @@ class SuspicionEnv(gym.Env):
                 if act_card_action[6] != 0: # Check For Question Player
                     # Setup
                     target_player = self.__player_turn + act_card_action[6]
-                    if target_player > self.__num_players:
+                    if target_player >= self.__num_players:
                         target_player -= self.__num_players # Wrap around offset idx
-                    target_char = np.where(self.__agent_cards[act_card_action[0]][6:] == 1)[0][0]
+                    target_char = np.where(self.__agent_cards[self.__player_turn][act_card_action[0]][6:] == 1)[0][0]
                     # "Ask" and apply to KB
                     target_player_char = self.__charAssigns[target_player]
                     can_see = False
@@ -557,17 +559,17 @@ class SuspicionEnv(gym.Env):
                         elif self.__state[char_loc_start+2*target_char+1] == self.__state[char_loc_start+2*char_idx+1]:
                             char_can_see = True
                         if can_see != char_can_see:
-                            self.__agent_kbs[self.__player_turn][target_player][char_idx] = 0
+                            self.__agent_kbs[self.__player_turn][act_card_action[6]-1][char_idx] = 0 # Not 'target_p' but just player offset
                 if act_card_action[7] > 0: # Check For trapdoor
                     target_char = act_card_action[7] - 1
                     self.__state[char_loc_start+2*target_char:char_loc_start+2*target_char+2] = act_card_action[8:10]
                 # Update Iteration Idx
                 act_idx += 10
             # Draw and Replace Used Act Card
-            self.__cards.append(self.__agent_cards[self.__player_turn].pop(action[6]))
-            self.__agent_cards[self.__player_turn].append(self.__cards.pop(0))
+            self.__cards.append(self.__agent_cards[self.__player_turn][action[6]].copy())
+            self.__agent_cards[self.__player_turn][action[6]] = self.__cards.pop(0) # Overwrite card details with new card
         else: # Check player identity guesses
-            pass
+            raise Exception("TODO: Setup Identity Guessing")
         # Return
         isDone = False # TODO: Set to true after all players have guessed identities
         return reward, isDone
