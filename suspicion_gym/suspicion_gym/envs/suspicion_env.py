@@ -63,7 +63,7 @@ class SuspicionEnv(gym.Env):
 
     def observe(self):
         self._personalize_state(self.__state) # Update for specific player before returning
-        return self.__player_turn, self.__state
+        return self.__player_turn, self.__state.copy()
 
     def step(self, action):
         # Setup
@@ -75,11 +75,11 @@ class SuspicionEnv(gym.Env):
             ###return self.__state, -1, False, {} # Return negative reward, do not update state or turn, force agent to repick and learn
             raise Exception("Invalid Action (%s)" % str(action)) # error out -> didnt meet act space rules
         # Perform Action
-        obs, reward, done = None, None, None # self._apply_action(action)
+        reward, done = self._apply_action(action) # Also modifies state (in place)
         info = {}
         self.__player_turn = self.__player_turn + 1 if self.__player_turn < self.__num_players else 0
         # Return
-        return obs, reward, done, info
+        return self.__state.copy(), reward, done, info
 
     def render(self, mode="human",):
     	if mode == "human":
@@ -289,8 +289,8 @@ class SuspicionEnv(gym.Env):
         action_card_limits.append(2) # yellow gem take
         action_card_limits.append(2) # taken from room flag
         action_card_limits.append(2) # view invite deck flag
-        action_card_limits.append(self.__num_players) # player index for question cards
-        action_card_limits.append(self.__dynSus_numCharacters) # trapdoor character
+        action_card_limits.append(self.__num_players) # player index for question cards (offset from own player index, 0 indicates no action)
+        action_card_limits.append(self.__dynSus_numCharacters+1) # trapdoor character (offset from standard idx, 0 indicates no action)
         action_card_limits.append(self.__dynSus_boardWidth) # trapdoor new x
         action_card_limits.append(self.__dynSus_boardHeight) # trapdoor new y
         act_limits.extend(action_card_limits) # two action cards (in order)
@@ -439,32 +439,135 @@ class SuspicionEnv(gym.Env):
         for card in range(2):
             act_cards.append(self.__state[state_idx:state_idx+16])
             state_idx += 16
-        # Check Die Moves
-        for die in range(2):
-            # Setup
-            die_move = action[act_idx:act_idx+3] # char, new_x, new_y
-            act_idx += 3
-            # Check on board
-            if die_move[1] < 0 or die_move[1] >= self.__dynSus_boardWidth or die_move[2] < 0 or die_move[2] >= self.__dynSus_boardHeight:
-                return False
-            # Check Move
-            if die_move[0] in die_rolls:
-                die_rolls = np.delete(die_rolls, np.where(die_rolls == die_move[0])[0][0])
-                if die_move[1] == char_locs[2*die_move[0]] and ((die_move[2] == char_locs[2*die_move[0]+1] - 1) or (die_move[2] == char_locs[2*die_move[0]+1] + 1)):
-                    char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
-                elif die_move[2] == char_locs[2*die_move[0]+1] and ((die_move[1] == char_locs[2*die_move[0]] - 1) or (die_move[1] == char_locs[2*die_move[0]] + 1)):
-                    char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
-                else:
+        print("Act Cards: %s" % str(act_cards))
+        # Check if normal gameplay or endgame (guessing identities)
+        if np.all(bank_gems > 0):
+            # Check Die Moves
+            for die in range(2):
+                # Setup
+                die_move = action[act_idx:act_idx+3] # char, new_x, new_y
+                act_idx += 3
+                # Check on board
+                if die_move[1] < 0 or die_move[1] >= self.__dynSus_boardWidth or die_move[2] < 0 or die_move[2] >= self.__dynSus_boardHeight:
                     return False
-            elif self.__dynSus_numCharacters in die_rolls:
-                die_rolls = np.delete(die_rolls, np.where(die_rolls == self.__dynSus_numCharacters)[0][0])
-                if die_move[1] == char_locs[2*die_move[0]] and ((die_move[2] == char_locs[2*die_move[0]+1] - 1) or (die_move[2] == char_locs[2*die_move[0]+1] + 1)):
-                    char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
-                elif die_move[2] == char_locs[2*die_move[0]+1] and ((die_move[1] == char_locs[2*die_move[0]] - 1) or (die_move[1] == char_locs[2*die_move[0]] + 1)):
-                    char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                # Check Move
+                if die_move[0] in die_rolls:
+                    die_rolls = np.delete(die_rolls, np.where(die_rolls == die_move[0])[0][0])
+                    if die_move[1] == char_locs[2*die_move[0]] and ((die_move[2] == char_locs[2*die_move[0]+1] - 1) or (die_move[2] == char_locs[2*die_move[0]+1] + 1)):
+                        char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                    elif die_move[2] == char_locs[2*die_move[0]+1] and ((die_move[1] == char_locs[2*die_move[0]] - 1) or (die_move[1] == char_locs[2*die_move[0]] + 1)):
+                        char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                    else:
+                        return False
+                elif self.__dynSus_numCharacters in die_rolls:
+                    die_rolls = np.delete(die_rolls, np.where(die_rolls == self.__dynSus_numCharacters)[0][0])
+                    if die_move[1] == char_locs[2*die_move[0]] and ((die_move[2] == char_locs[2*die_move[0]+1] - 1) or (die_move[2] == char_locs[2*die_move[0]+1] + 1)):
+                        char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                    elif die_move[2] == char_locs[2*die_move[0]+1] and ((die_move[1] == char_locs[2*die_move[0]] - 1) or (die_move[1] == char_locs[2*die_move[0]] + 1)):
+                        char_locs[2*die_move[0]:2*die_move[0]+2] = die_move[1:3] # update char_loc for "?" followed by regular roll
+                    else:
+                        return False
                 else:
+                    return False # attempted to move invalid character
+            # Check Action Card Actions
+            for idx in range(2):
+                # Setup
+                act_card_action = action[act_idx:act_idx+10]
+                print("Act Card Action: %s" % act_card_action)
+                act_idx += 10
+                # Validate Gem take
+                if np.any(act_card_action[1:5]):
+                    gem_idx = np.where(act_card_action[1:4] == 1)[0][0]
+                    if act_card_action[4] > 0 and not room_gems[gem_idx] == 1: # Taking from room
+                        print("Bad Room Take")
+                        return False
+                    elif act_card_action[4] == 0 and not act_cards[act_card_action[0]][1+gem_idx] == 1: # lucky lift
+                        print("Bad Lucky Take (%s)" % gem_idx)
+                        return False
+                # Validate Invite Deck View
+                if act_card_action[5] == 1 and not act_cards[act_card_action[0]][5] == 1:
+                    print("Bad Invite")
                     return False
-            else:
-                return False # attempted to move invalid character
+                # Validate Question Player
+                if act_card_action[6] != 0 and not np.any(act_cards[act_card_action[0]][-self.__dynSus_numCharacters:] == 1):
+                    print("Bad Question")
+                    return False
+                # Validate trapdoor
+                if act_card_action[7] > 0 and not act_cards[act_card_action[0]][0] == 1:
+                    print("Bad Trapdoor")
+                    return False
+        else: # Only need identity guesses
+            return False
         # Return Valid
         return True
+
+    """
+    description:
+    -> applies action (already validated) to internal state
+    parameters:
+    -> state (From susEnv object)
+    -> action
+    return:
+    -> reward, any float value associated with reard for the current action
+    -> isDone, boolean indicating if action ended the game or not
+    """
+    def _apply_action(self, action):
+        # Setup
+        reward = 0 # TODO: investigate in progress rewards vs endgame only reawrds?
+        act_idx = 0
+        # Apply Action
+        if np.all(self.__state[1:4] > 0): # Check if normal gameplay or endgame (guessing identities)
+            # Move for Die Rolls
+            char_loc_start = 1 + 3*(self.__num_players+1)
+            for die_move in range(2):
+                # Update Char Locs
+                self.__state[char_loc_start+2*action[act_idx]:char_loc_start+2*action[act_idx]+2] = action[act_idx+1:act_idx+3]
+                # Update Iteration Idx
+                act_idx += 3
+            # Apply Actions
+            for idx in range(2):
+                # Setup
+                act_card_action = action[act_idx:act_idx+10]
+                # Apply action
+                if np.any(act_card_action[1:5]): # Check for gem takes
+                    gem_idx = np.where(act_card_action[1:4] == 1)[0][0]
+                    self.__state[1+gem_idx] -= 1 # lower bank count
+                    self.__state[1+3*(1+self.__player_turn)+gem_idx] += 1 # add to player gem count
+                if act_card_action[5] == 1: # Check for Invite Deck View
+                    viewed_icard = self.__inviteDeck[self.__state[0]]
+                    self.__agent_kbs[self.__player_turn][:,viewed_icard] = 0
+                    self.__state[0] = self.__state[0] + 1 if self.__state[0] < len(self.__inviteDeck) - 1 else 0
+                if act_card_action[6] != 0: # Check For Question Player
+                    # Setup
+                    target_player = self.__player_turn + act_card_action[6]
+                    if target_player > self.__num_players:
+                        target_player -= self.__num_players # Wrap around offset idx
+                    target_char = np.where(self.__agent_cards[act_card_action[0]][6:] == 1)[0][0]
+                    # "Ask" and apply to KB
+                    target_player_char = self.__charAssigns[target_player]
+                    can_see = False
+                    if self.__state[char_loc_start+2*target_char] == self.__state[char_loc_start+2*target_player_char]:
+                        can_see = True
+                    elif self.__state[char_loc_start+2*target_char+1] == self.__state[char_loc_start+2*target_player_char+1]:
+                        can_see = True
+                    for char_idx in range(self.__dynSus_numCharacters):
+                        char_can_see = False
+                        if self.__state[char_loc_start+2*target_char] == self.__state[char_loc_start+2*char_idx]:
+                            char_can_see = True
+                        elif self.__state[char_loc_start+2*target_char+1] == self.__state[char_loc_start+2*char_idx+1]:
+                            char_can_see = True
+                        if can_see != char_can_see:
+                            self.__agent_kbs[self.__player_turn][target_player][char_idx] = 0
+                if act_card_action[7] > 0: # Check For trapdoor
+                    target_char = act_card_action[7] - 1
+                    self.__state[char_loc_start+2*target_char:char_loc_start+2*target_char+2] = act_card_action[8:10]
+                # Update Iteration Idx
+                act_idx += 10
+            # Draw and Replace Used Act Card
+            self.__cards.append(self.__agent_cards[self.__player_turn].pop(action[6]))
+            self.__agent_cards[self.__player_turn].append(self.__cards.pop(0))
+        else: # Check player identity guesses
+            pass
+        # Return
+        isDone = False # TODO: Set to true after all players have guessed identities
+        return reward, isDone
