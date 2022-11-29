@@ -85,18 +85,17 @@ def argParser():
 # return:
 #    args           dictionary with parsed arguments
 ################################################################################
-def playSuspicion(num_players=4, gui=False, episodes=1, debug=False):
+def playSuspicion(agents, gui=False, episodes=1, debug=False):
     # setup
     gui_size = 1000 if gui else None
     max_step = None
     # create env
-    susEnv = gym.make("Suspicion-v1", num_players=num_players,
+    susEnv = gym.make("Suspicion-v1", num_players=len(agents),
         gui_size=gui_size, gui_delay=1, debug=debug)
     # create agents
-    agents = [randSusAgent(num_players) for i in range(num_players)]
     rewards = [[] for i in range(len(agents))]
+    dones = [False for i in range(len(agents))]
     # loop epochs
-    starttime = time.time()
     for episode in range(episodes):
         # init
         timestep = 0
@@ -104,6 +103,7 @@ def playSuspicion(num_players=4, gui=False, episodes=1, debug=False):
         state = susEnv.reset()
         for agent in agents:
             agent.reset()
+        dones = [False for i in range(len(agents))]
         if debug:
             print("Initial State\n%s\n" % str(state))
         # interact
@@ -114,6 +114,8 @@ def playSuspicion(num_players=4, gui=False, episodes=1, debug=False):
             # setup
             agent_idx, state = susEnv.observe() # Current ENV state, after self/opponent actions. Needs to update player specific state bits to current player
             agent = agents[agent_idx]
+            if dones[agent_idx]:
+                break
             if debug:
                 print("\n\n\nTime: (%s),\tAgent: (%s)" % (str(timestep),str(agent_idx)))
                 print("\tState: %s" % str(state))
@@ -133,14 +135,13 @@ def playSuspicion(num_players=4, gui=False, episodes=1, debug=False):
             susEnv.render()
             # increment
             timestep += 1
+            dones[agent_idx] = done
+            # Validate
+            if np.all(np.array(dones) == True):
+                break
         # cleanup
         for agent_idx in range(len(agents)):
             rewards[agent_idx].append(agents[agent_idx].getReward())
-    # cleanup
-    endtime = time.time()
-    runtime = endtime - starttime
-    if debug:
-        print(time.strftime("Runtime: %H hours, %M minutes, %S seconds", time.gmtime(int(runtime))))
     # Return
     return rewards
 
@@ -162,11 +163,27 @@ if __name__ == "__main__":
     # Parse arguments
     args = argParser()
     if args.debug: pprint(args)
+    # setup
+    starttime = time.time()
+    agents = [randSusAgent(args.num_players) for i in range(args.num_players)]
     # Execute game
-    out = playSuspicion(
-        num_players = args.num_players,
+    rewards = playSuspicion(
+        agents = agents,
         gui = args.gui,
         episodes = args.episodes,
         debug = args.debug
     )
+    endtime = time.time()
+    runtime = endtime - starttime
     # Output
+    if args.debug: print("")
+    print("Tournament results (%s games played):" % args.episodes)
+    wins = np.argmax(rewards, axis=0) # TODO: Account for ties
+    for agent_idx in range(len(agents)):
+        print("\tAgent %s: %s" % (str(agent_idx), str(agents[agent_idx].__class__)))
+        print("\t\tNumber Wins: %s" % np.count_nonzero(wins == agent_idx))
+        print("\t\tAverage Score: %s" % str(np.average(rewards[agent_idx])))
+        print("\t\tMedian Score: %s" % str(np.median(rewards[agent_idx])))
+        print("\t\tMin Score: %s" % str(np.min(rewards[agent_idx])))
+        print("\t\tMax Score: %s" % str(np.max(rewards[agent_idx])))
+    print(time.strftime("Runtime: %H hours, %M minutes, %S seconds", time.gmtime(int(runtime))))
