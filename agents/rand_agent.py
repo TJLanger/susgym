@@ -97,47 +97,51 @@ class randSusAgent():
             act_cards.append(state[state_idx:state_idx+16])
             state_idx += 16
         # Action Creation
-        die_rolls = list(map(lambda x: np.random.randint(0, self.num_characters) if x == self.num_characters else x, list(die_rolls)))
-        for roll in die_rolls:
-            action[act_idx] = roll
-            curr_loc = char_locs[2*roll:2*roll+2]
-            action[act_idx+1:act_idx+3] = curr_loc
-            while True:
-                x_or_y = np.random.randint(0, 2)
-                plus_or_minus = 1 if np.random.randint(0, 2) == 1 else -1
-                new_val = action[act_idx+1+x_or_y] + plus_or_minus
-                if x_or_y == 0 and new_val >= 0 and new_val < 4:
-                    break
-                elif x_or_y == 1 and new_val >= 0 and new_val < 3:
-                    break
-            action[act_idx+1+x_or_y] += plus_or_minus
-            char_locs[2*roll:2*roll+2] = action[act_idx+1:act_idx+3]
-            act_idx += 3
-        act_card_idx = np.random.randint(0, 2)
-        act_order = np.random.randint(0, 2)
-        card_act_idxs = np.where(act_cards[act_card_idx] == 1)[0]
-        for act_card_action_idx in range(len(card_act_idxs)):
-            # Setup
-            act_card_action = card_act_idxs[act_card_action_idx] if act_order == 0 else card_act_idxs[len(card_act_idxs)-1-act_card_action_idx]
-            # Set Action
-            action[act_idx] = act_card_idx
-            if act_card_action == 0: # Trapdoor action
-                action[act_idx+7] = 1 + np.random.randint(0, self.num_characters)
-                action[act_idx+8] = np.random.randint(0, 4)
-                action[act_idx+9] = np.random.randint(0, 3)
-            elif act_card_action <= 3: # Lucky Lift
-                action[act_idx+act_card_action] = 1
-            elif act_card_action == 4: # Room Gem Take
-                action[act_idx+4] = 1
-                valid_room_gems = np.where(room_gems == 1)[0]
-                action[act_idx+1+valid_room_gems[np.random.randint(0,len(valid_room_gems))]] = 1
-            elif act_card_action == 5: # View invite deck
-                action[act_idx+5] = 1
-            else: # Character ask (line of sight)
-                char_to_ask = act_card_action - 6
-                action[act_idx+6] = np.random.randint(1, self.num_players) # 0 indicates self (no ask), all others are opponent offset from current player
-            # Increment act idx
-            act_idx += 10
+        if np.any(bank_gems == 0):
+            for opp_idx in range(1, self.num_players):
+                action[0-opp_idx] = np.random.randint(self.num_characters)
+        else:
+            die_rolls = list(map(lambda x: np.random.randint(0, self.num_characters) if x == self.num_characters else x, list(die_rolls)))
+            for roll in die_rolls:
+                action[act_idx] = roll
+                curr_loc = char_locs[2*roll:2*roll+2]
+                action[act_idx+1:act_idx+3] = curr_loc
+                while True:
+                    x_or_y = np.random.randint(0, 2)
+                    plus_or_minus = 1 if np.random.randint(0, 2) == 1 else -1
+                    new_val = action[act_idx+1+x_or_y] + plus_or_minus
+                    if x_or_y == 0 and new_val >= 0 and new_val < 4:
+                        break
+                    elif x_or_y == 1 and new_val >= 0 and new_val < 3:
+                        break
+                action[act_idx+1+x_or_y] += plus_or_minus
+                char_locs[2*roll:2*roll+2] = action[act_idx+1:act_idx+3]
+                act_idx += 3
+            act_card_idx = np.random.randint(0, 2)
+            act_order = np.random.randint(0, 2)
+            card_act_idxs = np.where(act_cards[act_card_idx] == 1)[0]
+            for act_card_action_idx in range(len(card_act_idxs)):
+                # Setup
+                act_card_action = card_act_idxs[act_card_action_idx] if act_order == 0 else card_act_idxs[len(card_act_idxs)-1-act_card_action_idx]
+                # Set Action
+                action[act_idx] = act_card_idx
+                if act_card_action == 0: # Trapdoor action
+                    action[act_idx+7] = 1 + np.random.randint(0, self.num_characters)
+                    action[act_idx+8] = np.random.randint(0, 4)
+                    action[act_idx+9] = np.random.randint(0, 3)
+                elif act_card_action <= 3: # Lucky Lift
+                    action[act_idx+act_card_action] = 1
+                elif act_card_action == 4: # Room Gem Take
+                    action[act_idx+4] = 1
+                    valid_room_gems = np.where(room_gems == 1)[0]
+                    action[act_idx+1+valid_room_gems[np.random.randint(0,len(valid_room_gems))]] = 1
+                elif act_card_action == 5: # View invite deck
+                    action[act_idx+5] = 1
+                else: # Character ask (line of sight)
+                    char_to_ask = act_card_action - 6
+                    action[act_idx+6] = np.random.randint(1, self.num_players) # 0 indicates self (no ask), all others are opponent offset from current player
+                # Increment act idx
+                act_idx += 10
         # Return
         return action
 
