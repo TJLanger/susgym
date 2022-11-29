@@ -73,8 +73,8 @@ class SuspicionEnv(gym.Env):
             raise Exception("Out of Space Action (%s)" % str(action)) # error out -> didnt meet act space rules
         elif not self._validate_action(action): # func to validate act choice based on state
             ### Todo: Counter and error if same bad action given N times?
-            ###return self.__state, -1, False, {} # Return negative reward, do not update state or turn, force agent to repick and learn
-            raise Exception("Invalid Action (%s)" % str(action)) # error out -> didnt meet act space rules
+            return self.__state, -1, False, {} # Return negative reward, do not update state or turn, force agent to repick and learn
+            ###raise Exception("Invalid Action (%s)" % str(action)) # error out -> didnt meet act space rules
         # Perform Action
         reward, done = self._apply_action(action) # Also modifies state (in place)
         info = {}
@@ -478,24 +478,26 @@ class SuspicionEnv(gym.Env):
                 act_idx += 10
                 # Validate Gem take
                 if np.any(act_card_action[1:5]):
+                    if act_card_action[4] == 1 and np.sum(act_card_action[1:4]) == 0:
+                        return False # Room flag set, but no gems marked for taking
                     gem_idx = np.where(act_card_action[1:4] == 1)[0][0]
                     if act_card_action[4] > 0 and not room_gems[gem_idx] == 1: # Taking from room
-                        print("Bad Room Take")
+                        ###print("Bad Room Take")
                         return False
                     elif act_card_action[4] == 0 and not act_cards[act_card_action[0]][1+gem_idx] == 1: # lucky lift
-                        print("Bad Lucky Take (%s)" % gem_idx)
+                        ###print("Bad Lucky Take (%s)" % gem_idx)
                         return False
                 # Validate Invite Deck View
                 if act_card_action[5] == 1 and not act_cards[act_card_action[0]][5] == 1:
-                    print("Bad Invite")
+                    ###print("Bad Invite")
                     return False
                 # Validate Question Player
                 if act_card_action[6] != 0 and not np.any(act_cards[act_card_action[0]][-self.__dynSus_numCharacters:] == 1):
-                    print("Bad Question")
+                    ###print("Bad Question")
                     return False
                 # Validate trapdoor
                 if act_card_action[7] > 0 and not act_cards[act_card_action[0]][0] == 1:
-                    print("Bad Trapdoor")
+                    ###print("Bad Trapdoor")
                     return False
         else: # Only need identity guesses
             pass # Any identity guess that meets the action space requirements is valid
