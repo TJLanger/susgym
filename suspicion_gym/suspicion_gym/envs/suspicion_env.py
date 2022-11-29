@@ -440,7 +440,7 @@ class SuspicionEnv(gym.Env):
         for card in range(2):
             act_cards.append(self.__state[state_idx:state_idx+16])
             state_idx += 16
-        print("Act Cards: %s" % str(act_cards))
+        ###print("Act Cards: %s" % str(act_cards))
         # Check if normal gameplay or endgame (guessing identities)
         if np.all(bank_gems > 0):
             # Check Die Moves
@@ -474,7 +474,7 @@ class SuspicionEnv(gym.Env):
             for idx in range(2):
                 # Setup
                 act_card_action = action[act_idx:act_idx+10]
-                print("Act Card Action: %s" % act_card_action)
+                ###print("Act Card Action: %s" % act_card_action)
                 act_idx += 10
                 # Validate Gem take
                 if np.any(act_card_action[1:5]):
@@ -498,8 +498,7 @@ class SuspicionEnv(gym.Env):
                     print("Bad Trapdoor")
                     return False
         else: # Only need identity guesses
-            print("TODO: Setup Identity Guessing")
-            return False
+            pass # Any identity guess that meets the action space requirements is valid
         # Return Valid
         return True
 
@@ -515,7 +514,8 @@ class SuspicionEnv(gym.Env):
     """
     def _apply_action(self, action):
         # Setup
-        reward = 0 # TODO: investigate in progress rewards vs endgame only reawrds?
+        reward = 0 # TODO: investigate in progress rewards vs endgame only rewards?
+        isDone = False
         act_idx = 0
         # Apply Action
         if np.all(self.__state[1:4] > 0): # Check if normal gameplay or endgame (guessing identities)
@@ -532,9 +532,11 @@ class SuspicionEnv(gym.Env):
                 act_card_action = action[act_idx:act_idx+10]
                 # Apply action
                 if np.any(act_card_action[1:5]): # Check for gem takes
+                    # Take Gem
                     gem_idx = np.where(act_card_action[1:4] == 1)[0][0]
                     self.__state[1+gem_idx] -= 1 # lower bank count
                     self.__state[1+3*(1+self.__player_turn)+gem_idx] += 1 # add to player gem count
+                    # Update KBs
                 if act_card_action[5] == 1: # Check for Invite Deck View
                     viewed_icard = self.__inviteDeck[self.__state[0]]
                     self.__agent_kbs[self.__player_turn][:,viewed_icard] = 0
@@ -569,7 +571,23 @@ class SuspicionEnv(gym.Env):
             self.__cards.append(self.__agent_cards[self.__player_turn][action[6]].copy())
             self.__agent_cards[self.__player_turn][action[6]] = self.__cards.pop(0) # Overwrite card details with new card
         else: # Check player identity guesses
-            raise Exception("TODO: Setup Identity Guessing")
+            # Setup
+            isDone = True # Agent in terminal state after guessing
+            # Check Guesses
+            for opp_idx in range(self.__num_players, 1, -1):
+                # Setup
+                char_guess = action[0-opp_idx]
+                opponent = self.__player_turn + opp_idx
+                if opponent >= self.__num_players:
+                    opponent -= self.__num_players # Wrap around offset idx
+                # Check Guess
+                if char_guess == self.__charAssigns[opponent]:
+                    reward += 7 # 7 points per correct guess
+            # Gem Points
+            player_gems = self.__state[1+3*(1+self.__player_turn):1+3*(1+self.__player_turn)+3]
+            while np.all(player_gems > 0):
+                reward += 6 # 6 points per gem set
+                player_gems = player_gems - 1
+            reward += 1 * np.sum(player_gems) # 1 point per remaining gem
         # Return
-        isDone = False # TODO: Set to true after all players have guessed identities
         return reward, isDone
