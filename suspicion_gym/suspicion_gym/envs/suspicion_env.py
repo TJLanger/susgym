@@ -3,6 +3,7 @@ import gym
 import itertools
 import math
 import numpy as np
+import random
 
 import time
 from tkinter import *
@@ -36,6 +37,7 @@ class SuspicionEnv(gym.Env):
         self.__charAssigns, self.__inviteDeck = self._init_characters()
         self.__board = self._init_board()
         self.__cards = self._init_cards()
+        self.__discards = []
         # OpenAI Gym Setup
         if self.gui is not None:
             self.gui.update()
@@ -570,7 +572,11 @@ class SuspicionEnv(gym.Env):
                 # Update Iteration Idx
                 act_idx += 10
             # Draw and Replace Used Act Card
-            self.__cards.append(self.__agent_cards[self.__player_turn][action[6]].copy())
+            self.__discards.append(self.__agent_cards[self.__player_turn][action[6]].copy())
+            if len(self.__cards) == 0:
+                while len(self.__discards) > 0:
+                    self.__cards.append(self.__discards.pop())
+                random.shuffle(self.__cards)
             self.__agent_cards[self.__player_turn][action[6]] = self.__cards.pop(0) # Overwrite card details with new card
         else: # Check player identity guesses
             # Setup
