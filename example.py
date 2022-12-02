@@ -166,6 +166,8 @@ if __name__ == "__main__":
     # setup
     starttime = time.time()
     agents = [randSusAgent(args.num_players) for i in range(args.num_players)]
+    ###agents = [randSusAgent(args.num_players) for i in range(args.num_players-1)]
+    ###agents.append(randAgent()) # pure rand agent always gets -1 * max_episodes
     # Execute game
     rewards = playSuspicion(
         agents = agents,
