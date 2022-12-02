@@ -93,8 +93,7 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
     susEnv = gym.make("Suspicion-v1", num_players=len(agents),
         gui_size=gui_size, gui_delay=1, debug=debug)
     # create agents
-    rewards = [[] for i in range(len(agents))]
-    dones = [False for i in range(len(agents))]
+    rewards = np.zeros((episodes,len(agents)), dtype=np.float64) # float to allow future partial rewards
     # loop epochs
     for episode in range(episodes):
         # init
@@ -141,9 +140,58 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
                 break
         # cleanup
         for agent_idx in range(len(agents)):
-            rewards[agent_idx].append(agents[agent_idx].getReward())
+            rewards[episode][agent_idx] = agents[agent_idx].getReward()
     # Return
     return rewards
+
+################################################################################
+# name:             getResults
+# description:      analyzes and prints tournament results
+# parameters:
+#    agents         list of agents playing the games
+#    rewards        2d array of rewards (num agents x num episodes)
+#    runtime        length of gameplay
+#    debug          boolean flag for debug mode
+# return:
+#    results        string with gameplay information and analysis
+################################################################################
+def getResults(agents, rewards, runtime=None, debug=False):
+    # setup
+    results = "\n" if debug else ""
+    num_episodes, num_agents = rewards.shape
+    # analyze games
+    #wins = np.argmax(rewards, axis=1) # doesnt account for ties, only first winner (bias towards agent 0, then 1, ...)
+    wins = [list(np.argwhere(e == np.max(e)).flatten()) for e in rewards]
+    # header
+    results += "Tournament results (%s games played):\n" % str(num_episodes)
+    # agent details
+    for agent_idx in range(len(agents)):
+        # Calcs
+        num_wins = np.count_nonzero([len(x) == 1 and x[0] == agent_idx for x in wins])
+        num_wins_and_ties = np.count_nonzero([agent_idx in x for x in wins])
+        num_ties = num_wins_and_ties - num_wins
+        win_rate = round(100*num_wins_and_ties/num_episodes, 2)
+        # Prints
+        results += "\tAgent %s: %s\n" % (str(agent_idx), str(agents[agent_idx].__class__))
+        results += "\t\tNumber Wins: %s\n" % num_wins
+        results += "\t\tNumber Ties: %s\n" % num_ties
+        results += "\t\tWin Rate (Wins and ties): %s%%\n" % win_rate
+        results += "\t\tAverage Score: %s\n" % str(np.average(rewards[:,agent_idx]))
+        results += "\t\tMedian Score: %s\n" % str(np.median(rewards[:,agent_idx]))
+        results += "\t\tMin Score: %s\n" % str(np.min(rewards[:,agent_idx]))
+        results += "\t\tMax Score: %s\n" % str(np.max(rewards[:,agent_idx]))
+    # runtime
+    if runtime is None:
+        pass
+    elif runtime > 3600:
+        results += time.strftime("Runtime: %H hours, %M minutes, %S seconds", time.gmtime(int(runtime))) + "\n"
+    elif runtime > 60:
+        results += time.strftime("Runtime: %M minutes, %S seconds", time.gmtime(int(runtime))) + "\n"
+    else:
+        results += time.strftime("Runtime: %S seconds", time.gmtime(int(runtime))) + "\n"
+    # return
+    return results
+
 
 
 ################################################################################
@@ -164,28 +212,17 @@ if __name__ == "__main__":
     args = argParser()
     if args.debug: pprint(args)
     # setup
-    starttime = time.time()
     agents = [randSusAgent(args.num_players) for i in range(args.num_players)]
     ###agents = [randSusAgent(args.num_players) for i in range(args.num_players-1)]
     ###agents.append(randAgent()) # pure rand agent always gets -1 * max_episodes
     # Execute game
+    starttime = time.time()
     rewards = playSuspicion(
         agents = agents,
         gui = args.gui,
         episodes = args.episodes,
         debug = args.debug
     )
-    endtime = time.time()
-    runtime = endtime - starttime
+    runtime = time.time() - starttime
     # Output
-    if args.debug: print("")
-    print("Tournament results (%s games played):" % args.episodes)
-    wins = np.argmax(rewards, axis=0) # TODO: Account for ties
-    for agent_idx in range(len(agents)):
-        print("\tAgent %s: %s" % (str(agent_idx), str(agents[agent_idx].__class__)))
-        print("\t\tNumber Wins: %s" % np.count_nonzero(wins == agent_idx))
-        print("\t\tAverage Score: %s" % str(np.average(rewards[agent_idx])))
-        print("\t\tMedian Score: %s" % str(np.median(rewards[agent_idx])))
-        print("\t\tMin Score: %s" % str(np.min(rewards[agent_idx])))
-        print("\t\tMax Score: %s" % str(np.max(rewards[agent_idx])))
-    print(time.strftime("Runtime: %H hours, %M minutes, %S seconds", time.gmtime(int(runtime))))
+    print(getResults(agents, rewards, runtime, args.debug))
