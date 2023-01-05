@@ -141,6 +141,9 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
         # cleanup
         for agent_idx in range(len(agents)):
             rewards[episode][agent_idx] = agents[agent_idx].getReward()
+    # Cleanup
+    time.sleep(5)
+    susEnv.cleanup()
     # Return
     return rewards
 

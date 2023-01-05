@@ -33,12 +33,12 @@ import itertools
 import math
 import numpy as np
 import random
+import sys
 import time
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 # Graphics
-from tkinter import *
-from tkinter import font
-from PIL import Image,ImageTk
+from suspicion_gym.suspicion_gym.guis import basic_gui
 
 
 
@@ -80,12 +80,13 @@ class SuspicionEnv(gym.Env):
         self.__num_players = num_players
         self.__debug = debug
         # OpenAI Gym Setup
-        self.action_space = gym.spaces.MultiDiscrete(self._gen_act_limits())
+        ###self.action_space = gym.spaces.MultiDiscrete(self._gen_act_limits())
+        self.action_space = SuspicionActionSpace(self._gen_act_limits())
         self.observation_space = gym.spaces.MultiDiscrete(self._gen_obs_limits())
         self.gui = None
         self.gui_delay = gui_delay
         if gui_size is not None:
-            pass # todo: self.gui = susGui(gui_width=gui_size, gui_height=gui_size, num_players=num_players)
+            self.gui = basic_gui.SusGui(num_players, gui_width=gui_size, gui_height=gui_size, max_gems=self._gen_max_gems())
         # Reset
         self.reset() # Most init code in reset, just call function to avoid copy/paste
 
@@ -146,7 +147,11 @@ class SuspicionEnv(gym.Env):
             # Validate
             if self.gui is not None:
                 # Setup
+                gem_start, gem_end = 1, 1+3*(self.__num_players+1)
+                gem_counts = self.__state[gem_start:gem_end]
+                char_locs = self.__state[gem_end:gem_end+2*self.__dynSus_numCharacters]
                 # Draw
+                self.gui.draw(gem_counts, char_locs)
                 # Human Viewing Delay
                 time.sleep(self.gui_delay)
             elif self.__debug:
@@ -656,6 +661,47 @@ class SuspicionEnv(gym.Env):
             reward += 1 * np.sum(player_gems) # 1 point per remaining gem
         # Return
         return reward, isDone
+
+"""
+description:
+-> MultiDiscrete action space with game specific functionality
+"""
+class SuspicionActionSpace(gym.spaces.MultiDiscrete):
+    def __init__(self, nvec: Union[np.ndarray, list], dtype=np.int64, seed: Optional[Union[int, np.random.Generator]] = None,):
+        super().__init__(nvec, dtype, seed)
+
+    @property
+    def shape(self) -> Tuple[int, ...]:
+        return super().shape
+
+    @property
+    def is_np_flattenable(self):
+        return super().is_np_flattenable
+
+    def sample(self, mask: Optional[tuple] = None) -> np.ndarray:
+        # Todo: Ignore passed mask, and generate custom based on state?
+        return super().sample(mask) if mask is not None else super().sample()
+
+    def contains(self, x) -> bool:
+        return super().contains(x)
+
+    def to_jsonable(self, sample_n: Iterable[np.ndarray]):
+        return super().to_jsonable(sample_n)
+
+    def from_jsonable(self, sample_n):
+        return super().from_jsonable(sample_n)
+
+    def __repr__(self):
+        return "Suspicion(" + super().__repr__() + ")"
+
+    def __getitem__(self, index):
+        return super().__getitem__(index)
+
+    def __len__(self):
+        return super().__len__()
+
+    def __eq__(self, other):
+        return super().__eq__(other)
 
 
 
