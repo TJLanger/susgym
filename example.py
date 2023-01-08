@@ -29,6 +29,7 @@
 import gym
 from suspicion_gym import suspicion_gym
 from agents.rand_agent import randAgent, randSusAgent
+from agents.int_agent import validGuessSusAgent, constraintGuessSusAgent
 
 # Other
 import argparse
@@ -215,9 +216,11 @@ if __name__ == "__main__":
     args = argParser()
     if args.debug: pprint(args)
     # setup
-    agents = [randSusAgent(args.num_players) for i in range(args.num_players)]
-    ###agents = [randSusAgent(args.num_players) for i in range(args.num_players-1)]
+    ##agents = [randSusAgent(args.num_players) for i in range(args.num_players)]
+    agents = [randSusAgent(args.num_players) for i in range(args.num_players-2)]
     ###agents.append(randAgent()) # pure rand agent always gets -1 * max_episodes
+    agents.append(validGuessSusAgent(args.num_players))
+    agents.append(constraintGuessSusAgent(args.num_players))
     # Execute game
     starttime = time.time()
     rewards = playSuspicion(
