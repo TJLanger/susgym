@@ -83,7 +83,6 @@ class randSusAgent():
 
     def pick_action(self, state, act_space, obs_space):
         # Setup
-        act_idx = 0
         action = np.zeros(act_space.shape, dtype=np.int8)
         # State Decode
         ii, bank_gems, pg, char_locs, die_rolls, room_gems, act_cards, k = agent_helpers.decode_state(state, self.num_players, self.num_characters)

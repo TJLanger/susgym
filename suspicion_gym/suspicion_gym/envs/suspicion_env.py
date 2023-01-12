@@ -14,7 +14,7 @@
 ##### Creation Date
 ############### 20221117
 ##### Description
-############### SUspicion environment code
+############### Suspicion environment code
 ##### Project
 ############### YYYYMMDD - (CONTRIBUTOR) EXAMPLE
 
@@ -679,7 +679,7 @@ class SuspicionActionSpace(gym.spaces.MultiDiscrete):
         return super().is_np_flattenable
 
     def sample(self, mask: Optional[tuple] = None) -> np.ndarray:
-        # Todo: Ignore passed mask, and generate custom based on state?
+        # Todo: Pass state in mask variable, and generate mask based on state?
         return super().sample(mask) if mask is not None else super().sample()
 
     def contains(self, x) -> bool:
