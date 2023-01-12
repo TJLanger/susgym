@@ -44,7 +44,6 @@ description:
 -> checks if an action is valid for the given game state and settings
 parameters:
 -> state: numpy array containing state values
--> num_players: int representing number of players in the game
 -> num_chars: int representing number of characters in the game
 return:
 -> invite_idx: index of the deck of remaining invitation cards
@@ -56,13 +55,18 @@ return:
 -> action_cards: 2D array of action cards
 -> knowledge: 2D array of boolean indicator for each opponents possible character assignments
 """
-def decode_state(state, num_players, num_characters=10):
+def decode_state(state, num_characters=10):
     # Setup
     state_idx = 0 # Increment variable, to step through state array
     player_gems = []
     character_locations = []
     action_cards = []
     knowledge = []
+
+    # Determine Player Count
+    state_len = len(state)
+    state_len -= (1 + 3 + (2*num_characters) + 2 + 3 + (2*16)) # Subtract non player specific
+    num_players = int((state_len + num_characters) / (3 + num_characters))
 
     # State Decode
     invite_idx = state[state_idx]
@@ -94,7 +98,7 @@ def decode_state(state, num_players, num_characters=10):
         state_idx += num_characters
 
     # Return
-    return invite_idx, bank_gems, player_gems, character_locations, die_rolls, room_gems, action_cards, knowledge
+    return num_players, invite_idx, bank_gems, player_gems, character_locations, die_rolls, room_gems, action_cards, knowledge
 
 """
 description:
@@ -109,11 +113,11 @@ parameters:
 return:
 -> isValid, boolean indicating if action was valid or not
 """
-def validate_action(action, state, num_players, num_characters=10, board_width=4, board_height=3):
+def validate_action(action, state, num_characters=10, board_width=4, board_height=3):
     # setup
     act_idx = 0
     # Get State info
-    invite_idx, bank_gems, player_gems, char_locs, die_rolls, room_gems, act_cards, knowledge = decode_state(state, num_players, num_characters)
+    num_players, invite_idx, bank_gems, player_gems, char_locs, die_rolls, room_gems, act_cards, knowledge = decode_state(state, num_characters)
     # Check if normal gameplay or endgame (guessing identities)
     if np.all(bank_gems > 0):
         # Check Die Moves
@@ -240,11 +244,11 @@ parameters:
 return:
 -> No return
 """
-def randActComp_actCards(action, num_players, state, act_card_idx=None, act_order=None, num_characters=10, board_width=4, board_height=3):
+def randActComp_actCards(action, state, act_card_idx=None, act_order=None, num_characters=10, board_width=4, board_height=3):
     # Setup
     act_idx = 6 # Start updating after die moves in action array
     # Decode State
-    invite_idx, bank_gems, player_gems, char_locs, die_rolls, room_gems, act_cards, knowledge = decode_state(state, num_players, num_characters)
+    num_players, invite_idx, bank_gems, player_gems, char_locs, die_rolls, room_gems, act_cards, knowledge = decode_state(state, num_characters)
     # Action Card Selection
     if act_card_idx is None: act_card_idx = np.random.randint(0, 2) # random select one of two action cards
     if act_order is None: act_order = np.random.randint(0, 2) # random select to por bottom action to apply first

@@ -90,7 +90,7 @@ def argParser():
         prefix_chars = '+-',
     )
     parser.add_argument('-a', '--agents', nargs='+', type=str) # No default, filled based on num_players if not given
-    parser.add_argument('-n', '--num_players', nargs='?', default=4, type=int)
+    parser.add_argument('-n', '--num_players', nargs='?', default=3, type=int)
     parser.add_argument('-e', '--episodes', nargs='?', default=1, type=int)
     parser.add_argument('-g', '--gui', action='store_false', default=False)
     parser.add_argument('+g', '++gui', action='store_true')
@@ -110,16 +110,16 @@ def argParser():
                 try:
                     module_name, class_name = line.strip().rsplit(".", 1)
                     inputAgent = getattr(importlib.import_module(module_name), class_name)
-                    parsed.agents.insert(idx+file_cnt, inputAgent(parsed.num_players))
+                    parsed.agents.insert(idx+file_cnt, inputAgent())
                     file_cnt += 1
                 except Exception:
                     pass
         else:
             module_name, class_name = agent.rsplit(".", 1)
             inputAgent = getattr(importlib.import_module(module_name), class_name)
-            parsed.agents[idx+file_cnt] = inputAgent(parsed.num_players)
+            parsed.agents[idx+file_cnt] = inputAgent()
     while len(parsed.agents) < parsed.num_players:
-        parsed.agents.append(randSusAgent(parsed.num_players))
+        parsed.agents.append(randSusAgent())
     # Return
     return parsed
 
