@@ -28,12 +28,14 @@
 # OpenAI gym
 import gym
 from suspicion_gym import suspicion_gym
-from agents.rand_agent import randAgent, randSusAgent
-from agents.int_agent import validGuessSusAgent, constraintGuessSusAgent
+from agents.rand_agent import randSusAgent
 
 # Other
 import argparse
+import importlib
 import numpy as np
+import os
+import signal
 import time
 
 # Debug
@@ -47,6 +49,11 @@ from pprint import pprint
 ################################################################################
 ################################################################################
 
+# Exceptions
+class QuitEpisode(Exception):
+    "Raised from sig handler to end episode loop but still print results"
+    pass
+
 
 
 ################################################################################
@@ -54,6 +61,19 @@ from pprint import pprint
 ## Subroutines
 ################################################################################
 ################################################################################
+
+################################################################################
+# name:             sigHandle
+# description:      signal handler
+# parameters:
+#    signal_number  numeric code for specific signal number (default argument passed to handler)
+#    stack_frame    None or a frame object (default argument passed to handler)
+# return:
+#    No return
+################################################################################
+def signal_handler(signal_number, stack_frame):
+    raise QuitEpisode
+signal.signal(signal.SIGINT, signal_handler)
 
 ################################################################################
 # name:             argParser
@@ -69,14 +89,39 @@ def argParser():
         description = "Demo interaction for suspicion_gym and agents",
         prefix_chars = '+-',
     )
+    parser.add_argument('-a', '--agents', nargs='+', type=str) # No default, filled based on num_players if not given
     parser.add_argument('-n', '--num_players', nargs='?', default=4, type=int)
     parser.add_argument('-e', '--episodes', nargs='?', default=1, type=int)
     parser.add_argument('-g', '--gui', action='store_false', default=False)
     parser.add_argument('+g', '++gui', action='store_true')
     parser.add_argument('-d', '--debug', action='store_false', default=True)
     parser.add_argument('+d', '++debug', action='store_true')
-    # return
-    return parser.parse_args()
+    # Parse
+    parsed = parser.parse_args()
+    # Generate Agent List
+    if parsed.agents is None: parsed.agents = []
+    file_cnt = 0
+    for idx in range(len(parsed.agents)):
+        agent = parsed.agents[idx]
+        if os.path.isfile(agent):
+            parsed.agents.remove(agent)
+            fh = open(agent, 'r')
+            for line in fh.readlines():
+                try:
+                    module_name, class_name = line.strip().rsplit(".", 1)
+                    inputAgent = getattr(importlib.import_module(module_name), class_name)
+                    parsed.agents.insert(idx+file_cnt, inputAgent(parsed.num_players))
+                    file_cnt += 1
+                except Exception:
+                    pass
+        else:
+            module_name, class_name = agent.rsplit(".", 1)
+            inputAgent = getattr(importlib.import_module(module_name), class_name)
+            parsed.agents[idx+file_cnt] = inputAgent(parsed.num_players)
+    while len(parsed.agents) < parsed.num_players:
+        parsed.agents.append(randSusAgent(parsed.num_players))
+    # Return
+    return parsed
 
 ################################################################################
 # name:             playSuspicion
@@ -96,52 +141,58 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
     # create agents
     rewards = np.zeros((episodes,len(agents)), dtype=np.float64) # float to allow future partial rewards
     # loop epochs
-    for episode in range(episodes):
-        # init
-        timestep = 0
-        epoch_over = False
-        state = susEnv.reset()
-        for agent in agents:
-            agent.reset()
-        dones = [False for i in range(len(agents))]
-        if debug:
-            print("Initial State\n%s\n" % str(state))
-        # interact
-        while max_step is None or timestep < max_step: # no max step set, or below limit
-            # validate
-            if epoch_over:
-                break
-            # setup
-            agent_idx, state = susEnv.observe() # Current ENV state, after self/opponent actions. Needs to update player specific state bits to current player
-            agent = agents[agent_idx]
-            if dones[agent_idx]:
-                break
+    try:
+        for episode in range(episodes):
+            # init
+            timestep = 0
+            epoch_over = False
+            state = susEnv.reset()
+            for agent in agents:
+                agent.reset()
+            dones = [False for i in range(len(agents))]
             if debug:
-                print("\n\n\nTime: (%s),\tAgent: (%s)" % (str(timestep),str(agent_idx)))
-                print("\tState: %s" % str(state))
-            # pick action
-            action = agent.pick_action(state, susEnv.action_space, susEnv.observation_space)
-            if debug:
-                print("Picking Action: %s, Len (%s)" % (str(action),str(len(action))))
-            # apply action
-            obs, reward, done, info = susEnv.step(action) # Obs = state after players turn
-            agent.update(obs, reward, done, info)
-            if debug:
-                print("\tNew State: %s" % str(obs))
-                print("\tReward: %s" % str(reward))
-                print("\tDone: %s" % str(done))
-                print("\tInfo: %s" % str(info))
-            # visualize
-            susEnv.render()
-            # increment
-            timestep += 1
-            dones[agent_idx] = done
-            # Validate
-            if np.all(np.array(dones) == True):
-                break
-        # cleanup
-        for agent_idx in range(len(agents)):
-            rewards[episode][agent_idx] = agents[agent_idx].getReward()
+                print("Initial State\n%s\n" % str(state))
+            # interact
+            while max_step is None or timestep < max_step: # no max step set, or below limit
+                # validate
+                if epoch_over:
+                    break
+                # setup
+                agent_idx, state = susEnv.observe() # Current ENV state, after self/opponent actions. Needs to update player specific state bits to current player
+                agent = agents[agent_idx]
+                if dones[agent_idx]:
+                    break
+                if debug:
+                    print("\n\n\nTime: (%s),\tAgent: (%s)" % (str(timestep),str(agent_idx)))
+                    print("\tState: %s" % str(state))
+                # pick action
+                action = agent.pick_action(state, susEnv.action_space, susEnv.observation_space)
+                if debug:
+                    print("Picking Action: %s, Len (%s)" % (str(action),str(len(action))))
+                # apply action
+                obs, reward, done, info = susEnv.step(action) # Obs = state after players turn
+                agent.update(obs, reward, done, info)
+                if debug:
+                    print("\tNew State: %s" % str(obs))
+                    print("\tReward: %s" % str(reward))
+                    print("\tDone: %s" % str(done))
+                    print("\tInfo: %s" % str(info))
+                # visualize
+                susEnv.render()
+                # increment
+                timestep += 1
+                dones[agent_idx] = done
+                # Validate
+                if np.all(np.array(dones) == True):
+                    break
+            # cleanup
+            for agent_idx in range(len(agents)):
+                rewards[episode][agent_idx] = agents[agent_idx].getReward()
+    except QuitEpisode:
+        # Trim rewards array to played games
+        sums = np.sum(rewards, axis=1)
+        first_unplayed = np.where(sums == 0)[0][0] # All completed games have points - at least gem takes to end game
+        rewards = rewards[0:first_unplayed]
     # Cleanup
     time.sleep(5)
     susEnv.cleanup()
@@ -216,19 +267,22 @@ if __name__ == "__main__":
     args = argParser()
     if args.debug: pprint(args)
     # setup
-    ##agents = [randSusAgent(args.num_players) for i in range(args.num_players)]
-    agents = [randSusAgent(args.num_players) for i in range(args.num_players-2)]
-    ###agents.append(randAgent()) # pure rand agent always gets -1 * max_episodes
-    agents.append(validGuessSusAgent(args.num_players))
-    agents.append(constraintGuessSusAgent(args.num_players))
+    # ##agents = [randSusAgent(args.num_players) for i in range(args.num_players)]
+    # agents = [randSusAgent(args.num_players) for i in range(args.num_players-3)]
+    # ###agents.append(randAgent()) # pure rand agent always gets -1 * max_episodes
+    # agents.append(intSusAgent(args.num_players))
+    # agents.append(validGuessSusAgent(args.num_players))
+    # agents.append(constraintGuessSusAgent(args.num_players))
+    # ###agents.append(intSusAgent(args.num_players))
+    # ###agents.append(rlSusAgent(args.num_players))
     # Execute game
     starttime = time.time()
     rewards = playSuspicion(
-        agents = agents,
+        agents = args.agents,
         gui = args.gui,
         episodes = args.episodes,
         debug = args.debug
     )
     runtime = time.time() - starttime
     # Output
-    print(getResults(agents, rewards, runtime, args.debug))
+    print(getResults(args.agents, rewards, runtime, args.debug))
