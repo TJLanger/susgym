@@ -266,15 +266,6 @@ if __name__ == "__main__":
     # Parse arguments
     args = argParser()
     if args.debug: pprint(args)
-    # setup
-    # ##agents = [randSusAgent(args.num_players) for i in range(args.num_players)]
-    # agents = [randSusAgent(args.num_players) for i in range(args.num_players-3)]
-    # ###agents.append(randAgent()) # pure rand agent always gets -1 * max_episodes
-    # agents.append(intSusAgent(args.num_players))
-    # agents.append(validGuessSusAgent(args.num_players))
-    # agents.append(constraintGuessSusAgent(args.num_players))
-    # ###agents.append(intSusAgent(args.num_players))
-    # ###agents.append(rlSusAgent(args.num_players))
     # Execute game
     starttime = time.time()
     rewards = playSuspicion(
