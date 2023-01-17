@@ -85,7 +85,7 @@ class randSusAgent():
         # Setup
         action = np.zeros(act_space.shape, dtype=np.int8)
         # State Decode
-        num_players, ii, bank_gems, pg, char_locs, die_rolls, room_gems, act_cards, k = agent_helpers.decode_state(state, self.num_characters)
+        num_players, ii, bank_gems, pg, char_locs, die_rolls, player_char, act_cards, k = agent_helpers.decode_state(state, self.num_characters)
         if self.num_players is None: self.num_players = num_players
         # Action Creation
         if np.any(bank_gems == 0):
