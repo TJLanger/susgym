@@ -150,17 +150,6 @@ class SuspicionEnv(gym.Env):
         # Perform Action
         reward, done = self._apply_action(action) # Also modifies state (in place)
         self._personalize_state(self.__state) # Update state with new cards/knowledge (for render - prior to turn update)
-        # DEBUG
-        for opp_idx in range(self.__num_players-1):
-            kb = self.__agent_kbs[self.__player_turn][opp_idx]
-            possible_opp_chars = np.where(kb == 1)[0]
-            opp_player_num = self.__player_turn + 1 + opp_idx
-            if opp_player_num >= self.__num_players:
-                opp_player_num -= self.__num_players
-            if not self.__charAssigns[opp_player_num] in possible_opp_chars:
-                print("KB Update Error (Player %s, Actual Char %s)\n%s" % (opp_player_num, self.__charAssigns[opp_player_num], kb))
-                self.render()
-                exit(0)
         ###
         info = {}
         self.__player_turn = self.__player_turn + 1 if self.__player_turn < self.__num_players - 1 else 0
@@ -512,7 +501,7 @@ class SuspicionEnv(gym.Env):
         bank_gems = self.__state[state_idx:state_idx+3]
         for player_idx in range(self.__num_players+1):
             state_idx += 3 # increment past gem counts for bank and all players
-        char_locs = np.copy(self.__state[state_idx:state_idx+2*self.__dynSus_numCharacters])
+        char_locs = np.copy(self.__state[state_idx:state_idx+2*self.__dynSus_numCharacters]) # Copy to prevent updates by reference
         state_idx += 2*self.__dynSus_numCharacters
         die_rolls = self.__state[state_idx:state_idx+2]
         state_idx += 2
@@ -525,6 +514,7 @@ class SuspicionEnv(gym.Env):
         # Check if normal gameplay or endgame (guessing identities)
         if np.all(bank_gems > 0):
             # Check Die Moves
+            char_loc_start = 1 + 3*(self.__num_players+1)
             for roll in die_rolls:
                 # Setup
                 die_move = action[act_idx:act_idx+2] # char, direction (up, down, right, left)
@@ -542,8 +532,33 @@ class SuspicionEnv(gym.Env):
                     return False
             # Check Action Card Actions
             ### Any card select / card order / target combo that meets the action space requirements is valid
-            ### TODO - NOT TRUE, need to validate gem takes
-        else: # Only need identity guesses
+            ### EXCEPT - need to validate gem takes from room (after die rolls and potential trapdoors)
+            act_card_select, act_card_order = action[act_idx:act_idx+2]
+            act_idx += 2
+            act_card_start = char_loc_start + 2*self.__dynSus_numCharacters + 2
+            act_card_actions = np.where(self.__agent_cards[self.__player_turn][act_card_select] == 1)[0]
+            if act_card_order == 1:
+                act_card_actions = np.flip(act_card_actions)
+            for act_card_action in act_card_actions:
+                # Setup
+                act_card_target = action[act_idx+act_card_order]
+                target_max = 120 if act_card_order == 0 else 6
+                # Apply action
+                if act_card_action == 0: # Trapdoor
+                    td_char = int(act_card_target / (self.__dynSus_boardWidth * self.__dynSus_boardHeight))
+                    td_room = act_card_target % (self.__dynSus_boardWidth * self.__dynSus_boardHeight)
+                    td_roomx = int(td_room / self.__dynSus_boardHeight)
+                    td_roomy =  td_room % self.__dynSus_boardHeight
+                    char_locs[2*td_char:2*td_char+2] = [td_roomx, td_roomy]
+                elif act_card_action == 4: # Gem Take (Room)
+                    # Take Gem
+                    gem_idx = int(3*act_card_target/target_max)
+                    player_char = self.__charAssigns[self.__player_turn]
+                    room_gems = self.__board[char_locs[2*player_char]][char_locs[2*player_char+1]]
+                    if not room_gems[gem_idx] == 1:
+                        return False
+                # Update Iteration Idx
+                act_card_order = 1 - act_card_order # Update order to pick other target for next action        else: # Only need identity guesses
             pass # Any identity guess that meets the action space requirements is valid
         # Return Valid
         return True
