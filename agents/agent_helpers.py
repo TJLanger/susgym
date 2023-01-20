@@ -339,6 +339,48 @@ def randActComp_actCards(action, state, act_card_idx=None, act_order=None, num_c
 ################################################################################
 ################################################################################
 
+"""
+description:
+-> Replay Buffer for storing state/action/reward/state' tuples
+"""
+class ReplayBuffer:
+    def __init__(self, capacity=100000, batch_size=64):
+        # Save Params
+        self.capacity = capacity # max number of observations to save
+        self.batch_size = batch_size # number of observations to return when queried
+        # Internal Vars
+        self.counter = 0 # count insertions, to determine index to write/overwrite
+        self.buffer_obs = None # class variable to store states in
+        self.buffer_act = None # class variable to store actions in
+        self.buffer_rwd = np.zeros((self.capacity, 1), dtype=np.float32) # class variable to store rewards in, not dependent on act/obs space
+        self.buffer_nob = None # class variable to store next states in
+
+    def __len__(self):
+        return min(self.counter, self.capacity)
+
+    def store(self, obs_tuple):
+        # Setup
+        index = self.counter % self.capacity # loops when count >= capacity
+        if self.buffer_obs is None: # Create act/obs space dependent buffers on first addition to replaybuffer
+            self.buffer_obs = np.zeros((self.capacity, obs_tuple[0].shape[0]), dtype=np.float32)
+            self.buffer_act = np.zeros((self.capacity, obs_tuple[1].shape[0]), dtype=np.float32)
+            self.buffer_nob = np.zeros((self.capacity, obs_tuple[3].shape[0]), dtype=np.float32)
+        # Store
+        self.buffer_obs[index] = obs_tuple[0]
+        self.buffer_act[index] = obs_tuple[1]
+        self.buffer_rwd[index] = obs_tuple[2]
+        self.buffer_nob[index] = obs_tuple[3]
+        # Update
+        self.counter += 1
+
+    def sample(self):
+        # Setup
+        sample_range = min(self.counter, self.capacity)
+        # Random select indices
+        idxs = np.random.choice(sample_range, self.batch_size)
+        # Return
+        return self.buffer_obs[idxs].copy(), self.buffer_act[idxs].copy(), self.buffer_rwd[idxs].copy(), self.buffer_nob[idxs].copy()
+
 
 
 ################################################################################

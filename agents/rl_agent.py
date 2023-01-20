@@ -58,9 +58,19 @@ from pprint import pprint
 
 # This update target parameters slowly
 # Based on rate `tau`, which is much less than one.
-@tf.function
-def update_target(target_weights, weights, tau):
-    for (a, b) in zip(target_weights, weights):
+"""
+description:
+-> Updates a Tensor towards a new target, either entirely or in small steps
+parameters:
+-> weights: Tensor to update
+-> targe_weights: Desired Tensor
+-> tau: Factor for scale of update. Tau=1 overwrites weights with new targets
+return:
+-> No return
+"""
+@tf.function # Decorated as Tensorflow function for execution optimization
+def update_target(weights, target_weights, tau):
+    for (a, b) in zip(weights, target_weights):
         a.assign(b * tau + a * (1 - tau))
 
 
@@ -73,10 +83,10 @@ def update_target(target_weights, weights, tau):
 
 """
 description:
--> RL based agent, with game knowledge to make random (but valid) action choices
+-> RL based agent, epsilon-greedy choice between DDPG network or stochastic (valid) actions
 """
 class rlSusAgent():
-    def __init__(self, eps=0.1, lr=0.001, gamma=0.99, tau=0):
+    def __init__(self, eps=0.1, lr=0.001, gamma=0.99, tau=1, batch_size=64):
         # Basic Setup
         self.reward = 0
         self.num_players = None
@@ -88,7 +98,8 @@ class rlSusAgent():
         self.gamma = gamma # Discount rate (gamma) for future reward scaling
         self.tau = tau # Target update rate (tau) for policy to target network updates
         # Models
-        self.replay_memory = deque(maxlen=1000) # list of [state, action, reward, new state, terminal]
+        self.batch_size = batch_size
+        self.replay_memory = agent_helpers.ReplayBuffer(batch_size=self.batch_size) # list of [state, action, reward, new state, terminal]
         self.actor_optimizer = tf.keras.optimizers.Adam(self.lr)
         self.actor, self.target_actor = None, None # created on first action select (need act/obs spaces)
         self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
@@ -129,42 +140,44 @@ class rlSusAgent():
         return action
 
     def update(self, next_state, reward, done, info):
-        ### Todo: More efficient buffer, move network update to hidden function (that is decorated for TF)
         # Basic Updates
         self.reward += reward
         # Network Updates
-        self.replay_memory.append([self.curr_state.copy(), self.curr_action.copy(), reward, next_state.copy(), done])
-        if done: # TODO: Train midgame, not just at end. Based on min_batch size?
-            # Generate Batch
-            batch_size = len(self.replay_memory) # TODO: control batch size, for now all samples (just randomized)
-            batch = random.sample(self.replay_memory, batch_size)
-            batch_states = tf.cast(tf.convert_to_tensor(np.array([b[0] for b in batch])), dtype=tf.float32)
-            batch_actions = tf.cast(tf.convert_to_tensor(np.array([b[1] for b in batch])), dtype=tf.float32)
-            batch_rewards = tf.cast(tf.convert_to_tensor(np.array([b[2] for b in batch])), dtype=tf.float32)
-            batch_next_states = tf.cast(tf.convert_to_tensor(np.array([b[3] for b in batch])), dtype=tf.float32)
-            # Update Critic
-            with tf.GradientTape() as tape:
-                target_actions = self.target_actor(batch_next_states, training=True)
-                y = batch_rewards + self.gamma * self.target_critic(
-                    [batch_next_states, target_actions], training=True
-                )
-                critic_value = self.critic([batch_states, batch_actions], training=True)
-                critic_loss = tf.math.reduce_mean(tf.math.square(y - critic_value))
+        self.replay_memory.store((self.curr_state, self.curr_action, reward, next_state))
+        # Generate Batch
+        if len(self.replay_memory) > self.batch_size:
+            batch_states, batch_actions, batch_rewards, batch_next_states = self.replay_memory.sample()
+            batch_states = tf.convert_to_tensor(batch_states)
+            batch_actions = tf.convert_to_tensor(batch_actions)
+            batch_rewards = tf.convert_to_tensor(batch_rewards)
+            batch_next_states = tf.convert_to_tensor(batch_next_states)
+            self._learn(batch_states, batch_actions, batch_rewards, batch_next_states)
 
-            critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
-            self.critic_optimizer.apply_gradients(
-                zip(critic_grad, self.critic.trainable_variables)
+    @tf.function # Decorated as Tensorflow function for execution optimization
+    def _learn(self, batch_states, batch_actions, batch_rewards, batch_next_states):
+        # Update Critic
+        with tf.GradientTape() as tape:
+            target_actions = self.target_actor(batch_next_states, training=True)
+            y = batch_rewards + self.gamma * self.target_critic(
+                [batch_next_states, target_actions], training=True
             )
-            # Update Actor
-            with tf.GradientTape() as tape:
-                actions = self.actor(batch_states, training=True)
-                critic_value = self.critic([batch_states, actions], training=True)
-                actor_loss = -tf.math.reduce_mean(critic_value)
+            critic_value = self.critic([batch_states, batch_actions], training=True)
+            critic_loss = tf.math.reduce_mean(tf.math.square(y - critic_value))
 
-            actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
-            self.actor_optimizer.apply_gradients(
-                zip(actor_grad, self.actor.trainable_variables)
-            )
+        critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
+        self.critic_optimizer.apply_gradients(
+            zip(critic_grad, self.critic.trainable_variables)
+        )
+        # Update Actor
+        with tf.GradientTape() as tape:
+            actions = self.actor(batch_states, training=True)
+            critic_value = self.critic([batch_states, actions], training=True)
+            actor_loss = -tf.math.reduce_mean(critic_value)
+
+        actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
+        self.actor_optimizer.apply_gradients(
+            zip(actor_grad, self.actor.trainable_variables)
+        )
 
     def getReward(self):
         return self.reward
@@ -173,25 +186,25 @@ class rlSusAgent():
         # Basic Setup
         self.reward = 0
         # Model Setup
-        self.replay_memory.clear()
         if self.actor is not None:
             update_target(self.target_actor.variables, self.actor.variables, self.tau)
             update_target(self.target_critic.variables, self.critic.variables, self.tau)
 
     def save_weights(self):
-        self.actor.save_weights('../checkpoints/ddpg_actor')
-        self.critic.save_weights('../checkpoints/ddpg_critic')        
+        pass
+        # self.actor.save_weights('../checkpoints/ddpg_actor3')
+        # self.critic.save_weights('../checkpoints/ddpg_critic3')
 
     def _create_models(self, act_space, obs_space):
         # Setup
-        hidden_actor_layers = 3
-        hidden_critic_layers = 3
+        hidden_actor_layers = 5
+        hidden_critic_layers = 5
 
         # Normalization Setup
-        act_norm_data = np.zeros((2, act_space.shape[0]), dtype=np.float64)
+        act_norm_data = np.zeros((2, act_space.shape[0]), dtype=np.float32)
         act_norm_data[1] = act_space.nvec - 1 # Gym MultiDiscrete n vector is not inclusive (n = max + 1)
 
-        obs_norm_data = np.zeros((2, obs_space.shape[0]), dtype=np.float64)
+        obs_norm_data = np.zeros((2, obs_space.shape[0]), dtype=np.float32)
         obs_norm_data[1] = obs_space.nvec - 1 # Gym MultiDiscrete n vector is not inclusive (n = max + 1)
 
         obs_norm = layers.Normalization()
@@ -214,7 +227,6 @@ class rlSusAgent():
         self.actor = tf.keras.Model(inputs, outputs)
 
         # Create Critic Models
-        hidden_critic_layers = 3
         input_size_critic = obs_space.shape[0] + act_space.shape[0]
         hidden_critic_step = int(input_size_critic/hidden_critic_layers)
 
@@ -228,6 +240,10 @@ class rlSusAgent():
             prev_layer = outputs
         outputs = layers.Dense(1, activation="sigmoid")(outputs)
         self.critic = tf.keras.Model([input_state, input_act], outputs)
+
+        # Load Weights
+        # self.actor.load_weights('../checkpoints/ddpg_actor3')
+        # self.critic.load_weights('../checkpoints/ddpg_critic3')
 
         # Copy Policy to Target
         self.target_actor = tf.keras.models.clone_model(self.actor)
