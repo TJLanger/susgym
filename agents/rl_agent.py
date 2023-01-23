@@ -86,12 +86,13 @@ description:
 -> RL based agent, epsilon-greedy choice between DDPG network or stochastic (valid) actions
 """
 class rlSusAgent():
-    def __init__(self, eps=0.1, lr=0.001, gamma=0.99, tau=1, batch_size=64):
+    def __init__(self, eps=0.1, lr=0.01, gamma=0.99, tau=1, batch_size=64):
         # Basic Setup
         self.reward = 0
         self.num_players = None
         self.num_characters = 10
         self.curr_state, self.curr_action = None, None
+        self.invalid_last_act = False
         # Model Parameters
         self.eps = eps # Explore/Exploit rate (epsilon)
         self.lr = lr # Learning rate (for network training)
@@ -117,20 +118,22 @@ class rlSusAgent():
         # Action Creation
         if np.any(bank_gems == 0):
             # Character Identity Guesses
-            agent_helpers.randActComp_charGuess(action, self.num_players, self.num_characters)
-            # num_opps = self.num_players-1
-            # for opp_idx in range(0, num_opps):
-            #     valid_opp_chars = np.where(knowledge[opp_idx] == 1)[0]
-            #     action[0-(num_opps-opp_idx)] = valid_opp_chars[np.random.randint(valid_opp_chars.size)]
+            # agent_helpers.randActComp_charGuess(action, self.num_players, self.num_characters)
+            num_opps = self.num_players-1
+            for opp_idx in range(0, num_opps):
+                valid_opp_chars = np.where(knowledge[opp_idx] == 1)[0]
+                action[0-(num_opps-opp_idx)] = valid_opp_chars[np.random.randint(valid_opp_chars.size)]
         else:
             # Select Exploration vs Exploitation
-            if np.random.rand() <= self.eps: # Explore (random move selection)
+            if np.random.rand() <= self.eps or self.invalid_last_act: # Explore (random move selection)
                 # Character Die Moves
                 agent_helpers.randActComp_dieMove(action, die_rolls, char_locs, self.num_characters)
                 # Action Card Selection
                 act_card_idx = np.random.randint(0, 2)
                 act_order = np.random.randint(0, 2)
                 agent_helpers.randActComp_actCards(action, state, act_card_idx, act_order, self.num_characters)
+                # Internal Var Updates
+                self.invalid_last_act = False # Failed network use flags, clear after random action selected as follow up
             else: # Exploit (select action based on network q-values)
                 # Generate Action from Actor Network
                 rl_act = tf.squeeze(self.actor(state)).numpy()
@@ -142,11 +145,12 @@ class rlSusAgent():
     def update(self, next_state, reward, done, info):
         # Basic Updates
         self.reward += reward
+        if np.all(self.curr_state == next_state): self.invalid_last_act = True
         # Network Updates
         self.replay_memory.store((self.curr_state, self.curr_action, reward, next_state))
         # Generate Batch
         if len(self.replay_memory) > self.batch_size:
-            batch_states, batch_actions, batch_rewards, batch_next_states = self.replay_memory.sample()
+            batch_states, batch_actions, batch_rewards, batch_next_states = self.replay_memory.biased_sample(bias=self.batch_size) # Half recent, half random - TODO: helps with invalid acts?
             batch_states = tf.convert_to_tensor(batch_states)
             batch_actions = tf.convert_to_tensor(batch_actions)
             batch_rewards = tf.convert_to_tensor(batch_rewards)
@@ -191,14 +195,16 @@ class rlSusAgent():
             update_target(self.target_critic.variables, self.critic.variables, self.tau)
 
     def save_weights(self):
-        pass
-        # self.actor.save_weights('../checkpoints/ddpg_actor3')
-        # self.critic.save_weights('../checkpoints/ddpg_critic3')
+        if False:
+            self.actor.save_weights('../checkpoints/ddpg_actor6')
+            self.critic.save_weights('../checkpoints/ddpg_critic6')
+        else:
+            pass
 
     def _create_models(self, act_space, obs_space):
         # Setup
-        hidden_actor_layers = 5
-        hidden_critic_layers = 5
+        hidden_actor_layers = 7
+        hidden_critic_layers = 7
 
         # Normalization Setup
         act_norm_data = np.zeros((2, act_space.shape[0]), dtype=np.float32)
@@ -214,7 +220,7 @@ class rlSusAgent():
         crit_norm.adapt(np.concatenate((obs_norm_data, act_norm_data), axis=1))
 
         # Create Actor Models
-        hidden_actor_step = int((obs_space.shape[0] - act_space.shape[0])/hidden_actor_layers)
+        hidden_actor_step = 0 #int((obs_space.shape[0] - act_space.shape[0])/hidden_actor_layers)
 
         inputs = layers.Input(shape=(obs_space.shape[0],))
         norm_inputs = obs_norm(inputs)
@@ -225,10 +231,13 @@ class rlSusAgent():
         outputs = layers.Dense(act_space.shape[0], activation="sigmoid")(outputs)
         outputs *= act_norm_data[1]
         self.actor = tf.keras.Model(inputs, outputs)
+        # print("Actor Model:")
+        # print(self.actor.summary())
+        # tf.keras.utils.plot_model(self.actor, to_file='../act.png', show_shapes=True) # Requires pydot and graphviz
 
         # Create Critic Models
         input_size_critic = obs_space.shape[0] + act_space.shape[0]
-        hidden_critic_step = int(input_size_critic/hidden_critic_layers)
+        hidden_critic_step = 0 #int(input_size_critic/hidden_critic_layers)
 
         input_state = layers.Input(shape=(obs_space.shape[0]))
         input_act = layers.Input(shape=(act_space.shape[0]))
@@ -240,10 +249,12 @@ class rlSusAgent():
             prev_layer = outputs
         outputs = layers.Dense(1, activation="sigmoid")(outputs)
         self.critic = tf.keras.Model([input_state, input_act], outputs)
+        # print("Critic Model:")
+        # print(self.critic.summary())
 
         # Load Weights
-        # self.actor.load_weights('../checkpoints/ddpg_actor3')
-        # self.critic.load_weights('../checkpoints/ddpg_critic3')
+        # self.actor.load_weights('../checkpoints/ddpg_actor4')
+        # self.critic.load_weights('../checkpoints/ddpg_critic4')
 
         # Copy Policy to Target
         self.target_actor = tf.keras.models.clone_model(self.actor)
