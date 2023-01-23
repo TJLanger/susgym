@@ -26,6 +26,9 @@
 ################################################################################
 ################################################################################
 
+# Testing
+import unittest
+
 # Other
 import numpy as np
 
@@ -381,6 +384,108 @@ class ReplayBuffer:
         # Return
         return self.buffer_obs[idxs].copy(), self.buffer_act[idxs].copy(), self.buffer_rwd[idxs].copy(), self.buffer_nob[idxs].copy()
 
+    def biased_sample(self, bias=None): # Bias=2 => half batch is recent data
+        # Setup
+        idxs = np.zeros(self.batch_size, dtype=np.uint32) # Int needs to be able to cover entire buffer range of idxs
+        sample_range = min(self.counter, self.capacity)
+        partial_batch_size = 0 if bias is None else int(self.batch_size/bias) # default to no bias (0 size for partial batch)
+        # Select most recent half batch
+        curr_idx = self.counter % self.capacity # loops when count >= capacity
+        if curr_idx >= partial_batch_size:
+            idxs[0:partial_batch_size] = np.arange(curr_idx-partial_batch_size, curr_idx)
+        else:
+            idxs[0:curr_idx] = np.arange(0, curr_idx)
+            idxs[curr_idx:partial_batch_size] = np.arange(self.capacity-(partial_batch_size-curr_idx), self.capacity)
+        # Random select indices
+        idxs[partial_batch_size:self.batch_size] = np.random.choice(sample_range, self.batch_size-partial_batch_size)
+        # Return
+        return self.buffer_obs[idxs].copy(), self.buffer_act[idxs].copy(), self.buffer_rwd[idxs].copy(), self.buffer_nob[idxs].copy()
+
+
+
+################################################################################
+################################################################################
+## Tests
+################################################################################
+################################################################################
+
+"""
+description:
+-> ReplayBuffer Testing
+"""
+class TestReplayBuffer(unittest.TestCase):
+    # Runs prior to each test
+    def setUp(self):
+        self.cap = 1000 # Buffer capacity
+        self.bs = 8 # Buffer batch size
+        self.rb = ReplayBuffer(capacity=self.cap, batch_size=self.bs)
+
+    # Test store method
+    def test_store(self):
+        self.rb.store((np.zeros(1),np.zeros(1),0,np.zeros(1))) # Pass test unless error
+
+    # Test overridden len()
+    def test_len(self):
+        self.assertEqual(len(self.rb), 0, "Empty buffer len() not set to zero")
+        self.rb.store((np.zeros(1),np.zeros(1),0,np.zeros(1)))
+        self.assertEqual(len(self.rb), 1, "Partially full buffer len() not returning number of items")
+        for _ in range(self.cap+1):
+            self.rb.store((np.zeros(1),np.zeros(1),0,np.zeros(1)))
+        self.assertEqual(len(self.rb), self.cap, "Full buffer len() not returning capacity")
+
+    # Test sample method
+    def test_sample(self):
+        # Underfull Buffer Sampling
+        self.rb.store((np.zeros(1),np.zeros(1),0,np.zeros(1)))
+        obs, act, rwd, nob = self.rb.sample() # State (observation), action, reward, next state
+        self.assertEqual(obs.shape[0], self.bs, "Sampled OBS not equal to batch size") # data duplicated to fill batch for underfull buffer
+        self.assertEqual(act.shape[0], self.bs, "Sampled ACT not equal to batch size")
+        self.assertEqual(rwd.shape[0], self.bs, "Sampled RWD not equal to batch size")
+        self.assertEqual(nob.shape[0], self.bs, "Sampled NOB not equal to batch size")
+        # Full Buffer Sampling
+        for idx in range(self.cap+1):
+            self.rb.store((idx*np.ones(1),idx*np.ones(1),idx,idx*np.ones(1)))
+        obs, act, rwd, nob = self.rb.sample() # State (observation), action, reward, next state
+        self.assertFalse(np.all(obs[:,0] == obs[0,0]), "Sampled values were all the same (Stochastically possible but unlikely)")
+        # Buffer Sequential Sampling
+        sequential = True
+        sampled_rewards = np.transpose(rwd).flatten()
+        val = sampled_rewards[0]
+        for idx in range(1, len(sampled_rewards)):
+            if not sampled_rewards[idx] == val + 1: sequential = False
+            val = sampled_rewards[idx]
+        self.assertFalse(sequential, "Sampled values were sequential (Stochastically possible but unlikely)")
+
+    # Test Biased sample method
+    def test_bias_sample(self):
+        # Setup
+        for idx in range(self.cap):
+            self.rb.store((idx*np.ones(1),idx*np.ones(1),idx,idx*np.ones(1)))
+        # Partial Bias
+        for bias in range(1, self.bs): # 1 is 100% bias (all should be sequential)
+            obs, act, rwd, nob = self.rb.biased_sample(bias)
+            expect_seq = int(self.bs/bias)
+            sequential = True
+            sampled_rewards = np.transpose(rwd).flatten()
+            val = sampled_rewards[0]
+            for idx in range(1, expect_seq):
+                if not sampled_rewards[idx] == val + 1: sequential = False
+                val = sampled_rewards[idx]
+            self.assertTrue(sequential, "Partial bias (%s) sample values were not sequential" % bias)
+        # Wrapped Bias
+        for _ in range(int(self.bs/2)):
+            self.rb.store((np.ones(1),np.ones(1),1,np.ones(1)))
+        obs, act, rwd, nob = self.rb.biased_sample(1)
+        sampled_rewards = np.transpose(rwd).flatten()
+        expect = [1 for _ in range(int(self.bs/2))]
+        for x in reversed(range(self.bs-int(self.bs/2))):
+            expect.append(self.cap-x-1)
+        self.assertTrue(np.all(sampled_rewards == np.array(expect)), "100% Bias with capacity wrap not valid")
+
+    # Runs after each test
+    def tearDown(self):
+        pass
+
 
 
 ################################################################################
@@ -389,4 +494,5 @@ class ReplayBuffer:
 ################################################################################
 ################################################################################
 if __name__ == "__main__":
-    print("No executable code, meant for use as module only")
+    print("File meant for use as module, executing unit tests")
+    unittest.main()
