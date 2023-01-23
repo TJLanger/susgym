@@ -70,6 +70,8 @@ description:
 class SuspicionEnv(gym.Env):
     def __init__(self, num_players, gui_size=None, gui_delay=0, debug=False):
         super(SuspicionEnv, self).__init__()
+        # ENV Options
+        self.__partialReward = True
         # Game Options
         self.__dynSus_numCharacters = 10
         self.__dynSus_charNames = None
@@ -123,16 +125,6 @@ class SuspicionEnv(gym.Env):
         return self.__state
 
     def observe(self):
-        # Roll Die
-        state_idx = 1 + 3 + 3*self.__num_players + 2*self.__dynSus_numCharacters # Invite idx, bank/player gems, character locations, then die rolls
-        for die_num in range(2):
-            if die_num == 0:
-                roll = np.random.randint(0, math.floor(self.__dynSus_numCharacters/2)+1) # standard 1-> 6 roll, need to lookup chars
-                self.__state[state_idx] = self.__die1_lup[roll]
-            else:
-                roll = np.random.randint(0, math.ceil(self.__dynSus_numCharacters/2)+1) # standard 1-> 6 roll, need to lookup chars
-                self.__state[state_idx] = self.__die2_lup[roll]
-            state_idx += 1
         # Update for specific player before returning
         self._personalize_state(self.__state)
         # Return
@@ -145,14 +137,23 @@ class SuspicionEnv(gym.Env):
             raise Exception("Out of Space Action (%s)" % str(action)) # error out -> didnt meet act space rules
         elif not self._validate_action(action): # func to validate act choice based on state
             ### Todo: Counter and error if same bad action given N times?
-            return self.__state, -1, False, {} # Return negative reward, do not update state or turn, force agent to repick and learn
+            return self.__state, -10, False, {} # Return negative reward, do not update state or turn, force agent to repick and learn
             ###raise Exception("Invalid Action (%s)" % str(action)) # error out -> didnt meet act space rules
         # Perform Action
         reward, done = self._apply_action(action) # Also modifies state (in place)
         self._personalize_state(self.__state) # Update state with new cards/knowledge (for render - prior to turn update)
-        ###
+        # Update ENV
         info = {}
         self.__player_turn = self.__player_turn + 1 if self.__player_turn < self.__num_players - 1 else 0
+        state_idx = 1 + 3 + 3*self.__num_players + 2*self.__dynSus_numCharacters # Invite idx, bank/player gems, character locations, then die rolls
+        for die_num in range(2):
+            if die_num == 0:
+                roll = np.random.randint(0, math.floor(self.__dynSus_numCharacters/2)+1) # standard 1-> 6 roll, need to lookup chars
+                self.__state[state_idx] = self.__die1_lup[roll]
+            else:
+                roll = np.random.randint(0, math.ceil(self.__dynSus_numCharacters/2)+1) # standard 1-> 6 roll, need to lookup chars
+                self.__state[state_idx] = self.__die2_lup[roll]
+            state_idx += 1
         # Return
         return self.__state.copy(), reward, done, info
 
@@ -496,6 +497,7 @@ class SuspicionEnv(gym.Env):
         # setup
         act_idx = 0
         state_idx = 1 # skip invite idx in state, start at gem counts
+        act_msg = False
         ### state_idx = 2 # bigger skip if using turn indicator in state
         # Get State info
         bank_gems = self.__state[state_idx:state_idx+3]
@@ -522,13 +524,15 @@ class SuspicionEnv(gym.Env):
                 act_idx += 2
                 # Check Character
                 if die_move[0] != roll and roll != self.__dynSus_numCharacters:
-                    return False # Fail if character doesnt match, or rolled a '?'
+                    if act_msg: print("INVALID ACT: Attempting to move Char %s on die roll %s" % (die_move[0], roll))
+                    return False # Fail if character doesnt match, unless rolled a '?'
                 # Check Move
                 move_char = die_move[0] if roll == self.__dynSus_numCharacters else roll
                 new_loc = char_locs[2*move_char:2*move_char+2] + move_dir
                 if new_loc[0] >= 0 and new_loc[0] < self.__dynSus_boardWidth and new_loc[1] >= 0 and new_loc[1] < self.__dynSus_boardHeight:
                     char_locs[2*move_char:2*move_char+2] += move_dir
                 else:
+                    if act_msg: print("INVALID ACT: Attempting to move Char off board (%s)" % die_move)
                     return False
             # Check Action Card Actions
             ### Any card select / card order / target combo that meets the action space requirements is valid
@@ -556,6 +560,7 @@ class SuspicionEnv(gym.Env):
                     player_char = self.__charAssigns[self.__player_turn]
                     room_gems = self.__board[char_locs[2*player_char]][char_locs[2*player_char+1]]
                     if not room_gems[gem_idx] == 1:
+                        if act_msg: print("INVALID GEM:\tTurn\t(%s)\tPC\t(%s)\tRoom\t(%s)\tTry\t(%s)" % (self.__player_turn, player_char, room_gems, gem_idx))
                         return False
                 # Update Iteration Idx
                 act_card_order = 1 - act_card_order # Update order to pick other target for next action        else: # Only need identity guesses
@@ -610,15 +615,33 @@ class SuspicionEnv(gym.Env):
                     td_roomy =  td_room % self.__dynSus_boardHeight
                     self.__state[char_loc_start+2*td_char:char_loc_start+2*td_char+2] = [td_roomx, td_roomy]
                 elif act_card_action <= 3: # Gem Take (R, G, Y)
+                    # Setup
+                    pgems = self.__state[1+3*(1+self.__player_turn):1+3*(1+self.__player_turn)+3]
+                    pgem_min = min(pgems)
+                    pgem_score = 2*3*pgem_min + sum(pgems-pgem_min)
                     # Take Gem
                     gem_idx = act_card_action - 1
                     self.__state[1+gem_idx] -= 1 # lower bank count
                     self.__state[1+3*(1+self.__player_turn)+gem_idx] += 1 # add to player gem count
+                    # Partial Reward
+                    if self.__partialReward:
+                        new_pgem_min = min(pgems)
+                        new_pgem_score = 2*3*new_pgem_min + sum(pgems-new_pgem_min)
+                        reward += new_pgem_score - pgem_score
                 elif act_card_action == 4: # Gem Take (Room)
+                    # Setup
+                    pgems = self.__state[1+3*(1+self.__player_turn):1+3*(1+self.__player_turn)+3]
+                    pgem_min = min(pgems)
+                    pgem_score = 2*3*pgem_min + sum(pgems-pgem_min)
                     # Take Gem
                     gem_idx = int(3*act_card_target/target_max)
                     self.__state[1+gem_idx] -= 1 # lower bank count
                     self.__state[1+3*(1+self.__player_turn)+gem_idx] += 1 # add to player gem count
+                    # Partial Reward
+                    if self.__partialReward:
+                        new_pgem_min = min(pgems)
+                        new_pgem_score = 2*3*new_pgem_min + sum(pgems-new_pgem_min)
+                        reward += new_pgem_score - pgem_score
                     # Update KBs
                     for char_idx in range(self.__dynSus_numCharacters):
                         char_loc = self.__state[char_loc_start+2*char_idx:char_loc_start+2*char_idx+2]
@@ -629,9 +652,14 @@ class SuspicionEnv(gym.Env):
                             update_idx = self.__player_turn - player_idx - 1 if self.__player_turn > player_idx else self.__num_players - 1 - player_idx + self.__player_turn
                             if update_idx >= self.__num_players:
                                 update_idx -= self.__num_players
+                            if self.__partialReward and self.__agent_kbs[player_idx][update_idx][char_idx] == 1:
+                                reward -= 7/self.__dynSus_numCharacters
                             self.__agent_kbs[player_idx][update_idx][char_idx] = 0
                 elif act_card_action == 5: # Check for Invite Deck View
                     viewed_icard = self.__inviteDeck[self.__state[0]]
+                    if self.__partialReward:
+                        for opp_kb in self.__agent_kbs[self.__player_turn]:
+                            if opp_kb[viewed_icard] == 1: reward += 7/self.__dynSus_numCharacters
                     self.__agent_kbs[self.__player_turn][:,viewed_icard] = 0
                     self.__state[0] = self.__state[0] + 1 if self.__state[0] < len(self.__inviteDeck) - 1 else 0
                 elif act_card_action <= 15: # Check for Character View Ask
@@ -654,6 +682,8 @@ class SuspicionEnv(gym.Env):
                         elif self.__state[char_loc_start+2*target_char+1] == self.__state[char_loc_start+2*char_idx+1]:
                             char_can_see = True
                         if can_see != char_can_see:
+                            if self.__partialReward and self.__agent_kbs[self.__player_turn][target_player_offset][char_idx] == 1:
+                                reward += 7/self.__dynSus_numCharacters
                             self.__agent_kbs[self.__player_turn][target_player_offset][char_idx] = 0 # Not 'target_p' but just player offset
                 # Update Iteration Idx
                 act_card_order = 1 - act_card_order # Update order to pick other target for next action
