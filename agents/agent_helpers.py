@@ -44,64 +44,69 @@ from pprint import pprint
 
 """
 description:
--> checks if an action is valid for the given game state and settings
+-> parses state array into understandable/labeled pieces
 parameters:
 -> state: numpy array containing state values
 -> num_chars: int representing number of characters in the game
 return:
--> invite_idx: index of the deck of remaining invitation cards
--> bank_gems: array of remaining gems for each color (Red, Green, Yellow)
--> player_gems: 2D array, with accumulated gem counts for each player (R,G,Y)
--> character_locations: 2D array, with x/y location of each character
--> die_rolls: Array containing character number rolled for each die (0->#C, #C = ? roll)
--> player_char: player character assignment
--> action_cards: 2D array of action cards
--> knowledge: 2D array of boolean indicator for each opponents possible character assignments
+---> decoded state dict
+---> invite_idx: index of the deck of remaining invitation cards
+---> bank_gems: array of remaining gems for each color (Red, Green, Yellow)
+---> player_gems: 2D array, with accumulated gem counts for each player (R,G,Y)
+---> character_locations: 2D array, with x/y location of each character
+---> die_rolls: Array containing character number rolled for each die (0->#C, #C = ? roll)
+---> player_char: player character assignment
+---> action_cards: 2D array of action cards
+---> knowledge: 2D array of boolean indicator for each opponents possible character assignments
 """
 def decode_state(state, num_characters=10):
     # Setup
     state_idx = 0 # Increment variable, to step through state array
-    player_gems = []
-    character_locations = []
-    action_cards = []
-    knowledge = []
+    decoded_state = {
+        "player_gems":[],
+        "character_locations":[],
+        "action_cards":[],
+        "knowledge":[],
+    }
+    if not isinstance(state, np.ndarray):
+        state = np.array(state)
 
     # Determine Player Count
     state_len = len(state)
     state_len -= (1 + 3 + (2*num_characters) + 2 + 1 + (2*16)) # Subtract non player specific
-    num_players = int((state_len + num_characters) / (3 + num_characters))
+    decoded_state["num_players"] = int((state_len + num_characters) / (3 + num_characters))
 
     # State Decode
-    invite_idx = state[state_idx]
+    decoded_state["invite_idx"] = state[state_idx]
     state_idx += 1
 
-    bank_gems = state[state_idx:state_idx+3]
+    decoded_state["bank_gems"] = state[state_idx:state_idx+3]
     state_idx += 3
 
-    for player_idx in range(num_players):
-        player_gems.append(state[state_idx:state_idx+3])
+    for player_idx in range(decoded_state["num_players"]):
+        decoded_state["player_gems"].append(state[state_idx:state_idx+3])
         state_idx += 3 # increment past gem counts for all players
 
     for character_idx in range(num_characters):
-        character_locations.append(state[state_idx:state_idx+2])
+        decoded_state["character_locations"].append(state[state_idx:state_idx+2])
         state_idx += 2
 
-    die_rolls = state[state_idx:state_idx+2]
+    decoded_state["die_rolls"] = state[state_idx:state_idx+2]
     state_idx += 2
 
-    player_char = state[state_idx]
+    decoded_state["player_char"] = state[state_idx]
     state_idx += 1
 
     for card in range(2):
-        action_cards.append(state[state_idx:state_idx+16])
+        decoded_state["action_cards"].append(state[state_idx:state_idx+16])
         state_idx += 16
 
-    for opponent_idx in range(num_players-1):
-        knowledge.append(state[state_idx:state_idx+num_characters])
+    for opponent_idx in range(decoded_state["num_players"]-1):
+        decoded_state["knowledge"].append(state[state_idx:state_idx+num_characters])
         state_idx += num_characters
 
     # Return
-    return num_players, invite_idx, bank_gems, player_gems, character_locations, die_rolls, player_char, action_cards, knowledge
+    return decoded_state
 
 """
 description:
@@ -275,28 +280,27 @@ parameters:
 return:
 -> No return
 """
-def randActComp_actCards(action, state, act_card_idx=None, act_order=None, num_characters=10, board_width=4, board_height=3):
+def randActComp_actCards(state, action, act_card_idx=None, act_order=None, num_characters=10, board_width=4, board_height=3):
     # Setup
     act_idx = 0 # Read && apply die rolls, before moving on and updating for action cards
     # Decode State
-    num_players, invite_idx, bank_gems, player_gems, char_locs, die_rolls, player_char, act_cards, knowledge = decode_state(state, num_characters)
-    room_gems = get_room_gems()[char_locs[player_char][0]][char_locs[player_char][1]]
+    dstate = state if isinstance(state, dict) else decode_state(state, num_characters)
     # Update for Die Rolls
-    char_loc_start = 1 + 3*(num_players+1)
+    char_loc_start = 1 + 3*(dstate["num_players"]+1)
     for roll_idx in range(2):
         # Setup
         die_move = action[act_idx:act_idx+2] # char, direction (up, down, right, left)
         move_dir = ([1,0] if die_move[1] % 2 == 0 else [-1,0]) if die_move[1] > 1 else ([0,1] if die_move[1] % 2 == 0 else [0,-1])
-        move_char = die_move[0] if die_rolls[roll_idx] == num_characters else die_rolls[roll_idx]
+        move_char = die_move[0] if dstate["die_rolls"][roll_idx] == num_characters else dstate["die_rolls"][roll_idx]
         # Update Char Locs
-        char_locs[move_char] += move_dir # WARNING - Char_locs and state linked by reference - updates both
+        dstate["character_locations"][move_char] += move_dir # WARNING - Char_locs and state linked by reference - updates both
         # Update Iteration Idx
         act_idx += 2
-    room_gems = get_room_gems()[char_locs[player_char][0]][char_locs[player_char][1]]
+    room_gems = get_room_gems()[dstate["character_locations"][dstate["player_char"]][0]][dstate["character_locations"][dstate["player_char"]][1]]
     # Action Card Selection
     if act_card_idx is None: act_card_idx = np.random.randint(0, 2) # random select one of two action cards
     if act_order is None: act_order = np.random.randint(0, 2) # random select top or bottom action to apply first
-    card_act_idxs = np.where(act_cards[act_card_idx] == 1)[0]
+    card_act_idxs = np.where(dstate["action_cards"][act_card_idx] == 1)[0]
     if act_order == 1:
         card_act_idxs = np.flip(card_act_idxs)
     action[act_idx] = act_card_idx
@@ -319,11 +323,11 @@ def randActComp_actCards(action, state, act_card_idx=None, act_order=None, num_c
             action[act_idx+act_order] += 3*td_x
             action[act_idx+act_order] += td_y
             # Update State (If TD occurs prior to gem take)
-            char_locs[td_char] = [td_x, td_y]
+            dstate["character_locations"][td_char] = [td_x, td_y]
         elif act_card_action <= 3: # Lucky Lift
             pass # Target irrelevant for lucky lift -> action determined completely by action card
         elif act_card_action == 4: # Room Gem Take
-            room_gems = get_room_gems()[char_locs[player_char][0]][char_locs[player_char][1]]
+            room_gems = get_room_gems()[dstate["character_locations"][dstate["player_char"]][0]][dstate["character_locations"][dstate["player_char"]][1]]
             valid_room_gems = np.where(room_gems == 1)[0]
             take_gem = valid_room_gems[np.random.randint(0,len(valid_room_gems))]
             # print("Act Helper, Take Gem: %s, from %s" % (take_gem, valid_room_gems))
@@ -331,10 +335,12 @@ def randActComp_actCards(action, state, act_card_idx=None, act_order=None, num_c
         elif act_card_action == 5: # View invite deck
             pass # Target irrelevant to invite deck view, no options but top card to view
         else: # Character ask (line of sight)
-            player_offset = np.random.randint(0, num_players-1) # Offset target value off by 1 (0 offset target == next player, 1 == next next player, ...)
-            action[act_idx+act_order] = target_max*(player_offset/(num_players-1))
+            player_offset = np.random.randint(0, dstate["num_players"]-1) # Offset target value off by 1 (0 offset target == next player, 1 == next next player, ...)
+            action[act_idx+act_order] = target_max*(player_offset/(dstate["num_players"]-1))
         # Increment act idx
         act_order = 1 - act_order # Update order to pick other target for next action
+
+
 
 ################################################################################
 ################################################################################
@@ -400,6 +406,53 @@ class ReplayBuffer:
         idxs[partial_batch_size:self.batch_size] = np.random.choice(sample_range, self.batch_size-partial_batch_size)
         # Return
         return self.buffer_obs[idxs].copy(), self.buffer_act[idxs].copy(), self.buffer_rwd[idxs].copy(), self.buffer_nob[idxs].copy()
+
+"""
+description:
+-> Stochastic agent, with game knowledge to make random (but valid) action choices
+-> Provides template for othher agents to follow, for overwriting portions of decisions
+"""
+class susAgent():
+    def __init__(self):
+        self.reward = 0
+        self.num_characters = 10
+
+    def update(self, next_state, reward, done, info):
+        self.reward += reward
+
+    def getReward(self):
+        return self.reward
+
+    def reset(self, reward=0):
+        self.reward = reward
+
+    def pick_action(self, state, act_space, obs_space):
+        # Setup
+        action = np.zeros(act_space.shape, dtype=np.int8)
+        # State Decode
+        dstate = decode_state(state, self.num_characters)
+        # Action Creation
+        if np.any(dstate["bank_gems"] == 0):
+            # Character Identity Guesses
+            self._act_charGuess(dstate, action, act_space, obs_space)
+        else:
+            # Character Die Moves
+            self._act_dieMove(dstate, action, act_space, obs_space)
+            # Action Card Selection
+            self._act_actCards(dstate, action, act_space, obs_space)
+        # Return
+        return action
+
+    def _act_charGuess(self, decoded_state, action, act_space, obs_space):
+        randActComp_charGuess(action, decoded_state["num_players"], self.num_characters)
+
+    def _act_dieMove(self, decoded_state, action, act_space, obs_space):
+        randActComp_dieMove(action, decoded_state["die_rolls"], decoded_state["character_locations"], self.num_characters)
+
+    def _act_actCards(self, decoded_state, action, act_space, obs_space):
+        act_card_idx = np.random.randint(0, 2)
+        act_order = np.random.randint(0, 2)
+        randActComp_actCards(decoded_state, action, act_card_idx, act_order, self.num_characters)
 
 
 

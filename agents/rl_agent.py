@@ -73,6 +73,20 @@ def update_target(weights, target_weights, tau):
     for (a, b) in zip(weights, target_weights):
         a.assign(b * tau + a * (1 - tau))
 
+"""
+description: randomly selects indices from decoded state information
+parameters:
+-> decoded_state: dict of state information
+-> action: numpy array to modify
+return:
+-> No return. Modifies action in place
+"""
+def randValidGuess(dstate, act):
+    num_opps = dstate["num_players"]-1
+    for opp_idx in range(0, num_opps):
+        valid_opp_chars = np.where(dstate["knowledge"][opp_idx] == 1)[0]
+        act[0-(num_opps-opp_idx)] = valid_opp_chars[np.random.randint(valid_opp_chars.size)]
+
 
 
 ################################################################################
@@ -85,12 +99,11 @@ def update_target(weights, target_weights, tau):
 description:
 -> RL based agent, epsilon-greedy choice between DDPG network or stochastic (valid) actions
 """
-class rlSusAgent():
+class ddpgSusAgent(agent_helpers.susAgent):
     def __init__(self, eps=0.1, lr=0.01, gamma=0.99, tau=1, batch_size=64):
+        # Parent Setup
+        super().__init__()
         # Basic Setup
-        self.reward = 0
-        self.num_players = None
-        self.num_characters = 10
         self.curr_state, self.curr_action = None, None
         self.invalid_last_act = False
         # Model Parameters
@@ -105,6 +118,39 @@ class rlSusAgent():
         self.actor, self.target_actor = None, None # created on first action select (need act/obs spaces)
         self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
         self.critic, self.target_critic = None, None # created on first action select (need act/obs spaces)
+        # Functionality Controls
+        self.train = False # True => e-greedy, update network; False => 'optimal' actions only
+
+    def update(self, next_state, reward, done, info):
+        # Parent
+        super().update(next_state, reward, done, info)
+        # Basic Updates
+        if np.all(self.curr_state == next_state): self.invalid_last_act = True
+        # Network Updates
+        self.replay_memory.store((self.curr_state, self.curr_action, reward, next_state))
+        # Generate Batch
+        if self.train and len(self.replay_memory) > self.batch_size:
+            batch_states, batch_actions, batch_rewards, batch_next_states = self.replay_memory.biased_sample(bias=self.batch_size) # Half recent, half random - TODO: helps with invalid acts?
+            batch_states = tf.convert_to_tensor(batch_states)
+            batch_actions = tf.convert_to_tensor(batch_actions)
+            batch_rewards = tf.convert_to_tensor(batch_rewards)
+            batch_next_states = tf.convert_to_tensor(batch_next_states)
+            self._learn(batch_states, batch_actions, batch_rewards, batch_next_states)
+
+    def reset(self):
+        # Basic
+        super().reset()
+        # Model Setup
+        if self.actor is not None:
+            update_target(self.target_actor.variables, self.actor.variables, self.tau)
+            update_target(self.target_critic.variables, self.critic.variables, self.tau)
+
+    def save_weights(self):
+        if self.train and False:
+            self.actor.save_weights('./checkpoints/ddpg_actor3')
+            self.critic.save_weights('./checkpoints/ddpg_critic3')
+        else:
+            pass
 
     def pick_action(self, state, act_space, obs_space):
         # Setup
@@ -112,26 +158,20 @@ class rlSusAgent():
         # Network Setup
         if self.actor is None: # All models created at same time, any being None indicates not initialized
             self._create_models(act_space, obs_space)
-        # State Decode
-        num_players, ii, bank_gems, pg, char_locs, die_rolls, player_char, act_cards, knowledge = agent_helpers.decode_state(state, self.num_characters)
-        if self.num_players is None: self.num_players = num_players
         # Action Creation
-        if np.any(bank_gems == 0):
+        if np.any(state[1:4] == 0): # Update to check non-decoded state (RL agent deosnt decode unless needed)
+            # Deocde State
+            dstate = agent_helpers.decode_state(state, self.num_characters)
             # Character Identity Guesses
-            # agent_helpers.randActComp_charGuess(action, self.num_players, self.num_characters)
-            num_opps = self.num_players-1
-            for opp_idx in range(0, num_opps):
-                valid_opp_chars = np.where(knowledge[opp_idx] == 1)[0]
-                action[0-(num_opps-opp_idx)] = valid_opp_chars[np.random.randint(valid_opp_chars.size)]
+            self._act_charGuess(dstate, action, act_space, obs_space)
         else:
-            # Select Exploration vs Exploitation
-            if np.random.rand() <= self.eps or self.invalid_last_act: # Explore (random move selection)
+            if self.invalid_last_act or (self.train and np.random.rand() <= self.eps): # Explore (random move selection) - Disable for trained results testing
+                # Deocde State
+                dstate = agent_helpers.decode_state(state, self.num_characters)
                 # Character Die Moves
-                agent_helpers.randActComp_dieMove(action, die_rolls, char_locs, self.num_characters)
+                self._act_dieMove(dstate, action, act_space, obs_space)
                 # Action Card Selection
-                act_card_idx = np.random.randint(0, 2)
-                act_order = np.random.randint(0, 2)
-                agent_helpers.randActComp_actCards(action, state, act_card_idx, act_order, self.num_characters)
+                self._act_actCards(dstate, action, act_space, obs_space)
                 # Internal Var Updates
                 self.invalid_last_act = False # Failed network use flags, clear after random action selected as follow up
             else: # Exploit (select action based on network q-values)
@@ -142,27 +182,15 @@ class rlSusAgent():
         self.curr_state, self.curr_action = state, action # Track for replay buffer saves in update method
         return action
 
-    def update(self, next_state, reward, done, info):
-        # Basic Updates
-        self.reward += reward
-        if np.all(self.curr_state == next_state): self.invalid_last_act = True
-        # Network Updates
-        self.replay_memory.store((self.curr_state, self.curr_action, reward, next_state))
-        # Generate Batch
-        if len(self.replay_memory) > self.batch_size:
-            batch_states, batch_actions, batch_rewards, batch_next_states = self.replay_memory.biased_sample(bias=self.batch_size) # Half recent, half random - TODO: helps with invalid acts?
-            batch_states = tf.convert_to_tensor(batch_states)
-            batch_actions = tf.convert_to_tensor(batch_actions)
-            batch_rewards = tf.convert_to_tensor(batch_rewards)
-            batch_next_states = tf.convert_to_tensor(batch_next_states)
-            self._learn(batch_states, batch_actions, batch_rewards, batch_next_states)
+    def _act_charGuess(self, decoded_state, action, act_space, obs_space):
+        randValidGuess(decoded_state, action)
 
     @tf.function # Decorated as Tensorflow function for execution optimization
     def _learn(self, batch_states, batch_actions, batch_rewards, batch_next_states):
         # Update Critic
         with tf.GradientTape() as tape:
             target_actions = self.target_actor(batch_next_states, training=True)
-            y = batch_rewards + self.gamma * self.target_critic(
+            y = batch_rewards + self.gamma * self.target_critic( # TODO: reward not normalized - dominating and blocking leanring?
                 [batch_next_states, target_actions], training=True
             )
             critic_value = self.critic([batch_states, batch_actions], training=True)
@@ -182,24 +210,6 @@ class rlSusAgent():
         self.actor_optimizer.apply_gradients(
             zip(actor_grad, self.actor.trainable_variables)
         )
-
-    def getReward(self):
-        return self.reward
-
-    def reset(self):
-        # Basic Setup
-        self.reward = 0
-        # Model Setup
-        if self.actor is not None:
-            update_target(self.target_actor.variables, self.actor.variables, self.tau)
-            update_target(self.target_critic.variables, self.critic.variables, self.tau)
-
-    def save_weights(self):
-        if False:
-            self.actor.save_weights('../checkpoints/ddpg_actor6')
-            self.critic.save_weights('../checkpoints/ddpg_critic6')
-        else:
-            pass
 
     def _create_models(self, act_space, obs_space):
         # Setup
@@ -253,8 +263,8 @@ class rlSusAgent():
         # print(self.critic.summary())
 
         # Load Weights
-        # self.actor.load_weights('../checkpoints/ddpg_actor4')
-        # self.critic.load_weights('../checkpoints/ddpg_critic4')
+        # self.actor.load_weights('./checkpoints/ddpg_actor3')
+        # self.critic.load_weights('./checkpoints/ddpg_critic3')
 
         # Copy Policy to Target
         self.target_actor = tf.keras.models.clone_model(self.actor)
