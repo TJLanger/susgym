@@ -84,7 +84,7 @@ class SuspicionEnv(gym.Env):
         # OpenAI Gym Setup
         ###self.action_space = gym.spaces.MultiDiscrete(self._gen_act_limits())
         self.action_space = SuspicionActionSpace(self._gen_act_limits())
-        self.observation_space = gym.spaces.MultiDiscrete(self._gen_obs_limits())
+        self.observation_space = gym.spaces.MultiDiscrete(self._gen_obs_limits(), dtype=np.int8)
         self.gui = None
         self.gui_delay = gui_delay
         if gui_size is not None:
@@ -142,8 +142,7 @@ class SuspicionEnv(gym.Env):
         # Perform Action
         reward, done = self._apply_action(action) # Also modifies state (in place)
         self._personalize_state(self.__state) # Update state with new cards/knowledge (for render - prior to turn update)
-        # Update ENV
-        info = {}
+        # Other ENV Updates
         self.__player_turn = self.__player_turn + 1 if self.__player_turn < self.__num_players - 1 else 0
         state_idx = 1 + 3 + 3*self.__num_players + 2*self.__dynSus_numCharacters # Invite idx, bank/player gems, character locations, then die rolls
         for die_num in range(2):
@@ -155,6 +154,7 @@ class SuspicionEnv(gym.Env):
                 self.__state[state_idx] = self.__die2_lup[roll]
             state_idx += 1
         # Return
+        info = {}
         return self.__state.copy(), reward, done, info
 
     def render(self, mode="human",):
@@ -208,8 +208,7 @@ class SuspicionEnv(gym.Env):
                 #         print("\t\t\tOpp: %s" % self.__agent_kbs[pidx][opp_idx])
                 print("\n\n\n")
 
-
-    def cleanup(self):
+    def close(self):
         if self.gui is not None:
             self.gui.destroy()
 
@@ -395,9 +394,9 @@ class SuspicionEnv(gym.Env):
         ###obs_limits.append(self.__num_players) # turn indicator
         obs_limits.append(self.__dynSus_numCharacters-self.__num_players) # invite deck size
         for player_idx in range(self.__num_players+1): # player and bank gem counts
-            obs_limits.append(self._gen_max_gems()) # red gem count
-            obs_limits.append(self._gen_max_gems()) # green gem count
-            obs_limits.append(self._gen_max_gems()) # yellow gem count
+            obs_limits.append(self._gen_max_gems()+1) # red gem count
+            obs_limits.append(self._gen_max_gems()+1) # green gem count
+            obs_limits.append(self._gen_max_gems()+1) # yellow gem count
         for char_idx in range(self.__dynSus_numCharacters): # character locations x/y
             obs_limits.append(self.__dynSus_boardWidth)
             obs_limits.append(self.__dynSus_boardHeight)
