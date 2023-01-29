@@ -25,6 +25,7 @@
 ## Imports
 ################################################################################
 ################################################################################
+
 # OpenAI gym
 import gym
 from suspicion_gym import suspicion_gym
@@ -139,6 +140,7 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
     susEnv = gym.make("Suspicion-v1", num_players=len(agents),
         gui_size=gui_size, gui_delay=1, debug=debug)
     # create agents
+    scores = np.zeros((episodes,len(agents)), dtype=np.int64)
     rewards = np.zeros((episodes,len(agents)), dtype=np.float64) # float to allow future partial rewards
     # loop epochs
     try:
@@ -171,6 +173,8 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
                     print("Picking Action: %s, Len (%s)" % (str(action),str(len(action))))
                 # apply action
                 obs, reward, done, info = susEnv.step(action) # Obs = state after players turn
+                scores[episode][agent_idx] = reward # Set - last reward is game score
+                rewards[episode][agent_idx] += reward # Sum - cumulative reward is total reward
                 agent.update(obs, reward, done, info)
                 if debug:
                     print("\tNew State: %s" % str(obs))
@@ -185,13 +189,14 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
                 # Validate
                 if np.all(np.array(dones) == True):
                     break
-            # cleanup
-            for agent_idx in range(len(agents)):
-                rewards[episode][agent_idx] = agents[agent_idx].getReward()
+            # # cleanup
+            # for agent_idx in range(len(agents)):
+            #     rewards[episode][agent_idx] = agents[agent_idx].getReward()
     except QuitEpisode:
         # Trim rewards array to played games
-        sums = np.sum(rewards, axis=1)
+        sums = np.sum(scores, axis=1)
         first_unplayed = np.where(sums == 0)[0][0] # All completed games have points - at least gem takes to end game
+        scores = scores[0:first_unplayed]
         rewards = rewards[0:first_unplayed]
     # Save Agent Weights
     for agent in agents:
@@ -201,28 +206,29 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
             pass
     # Cleanup
     time.sleep(5)
-    susEnv.cleanup()
+    susEnv.close()
     # Return
-    return rewards
+    return scores, rewards
 
 ################################################################################
 # name:             getResults
 # description:      analyzes and prints tournament results
 # parameters:
 #    agents         list of agents playing the games
-#    rewards        2d array of rewards (num agents x num episodes)
+#    scores         2d array of scores (final reward) (num agents x num episodes)
+#    rewards        2d array of cumulative rewards (num agents x num episodes)
 #    runtime        length of gameplay
 #    debug          boolean flag for debug mode
 # return:
 #    results        string with gameplay information and analysis
 ################################################################################
-def getResults(agents, rewards, runtime=None, debug=False):
+def getResults(agents, scores, rewards, runtime=None, debug=False):
     # setup
     results = "\n" if debug else ""
-    num_episodes, num_agents = rewards.shape
+    num_episodes, num_agents = scores.shape
     # analyze games
     #wins = np.argmax(rewards, axis=1) # doesnt account for ties, only first winner (bias towards agent 0, then 1, ...)
-    wins = [list(np.argwhere(e == np.max(e)).flatten()) for e in rewards]
+    wins = [list(np.argwhere(e == np.max(e)).flatten()) for e in scores]
     # header
     results += "Tournament results (%s games played):\n" % str(num_episodes)
     # agent details
@@ -237,11 +243,14 @@ def getResults(agents, rewards, runtime=None, debug=False):
         results += "\t\tNumber Wins: %s\n" % num_wins
         results += "\t\tNumber Ties: %s\n" % num_ties
         results += "\t\tWin Rate (Wins and ties): %s%%\n" % win_rate
-        results += "\t\tAverage Score: %s\n" % str(np.average(rewards[:,agent_idx]))
-        results += "\t\tMedian Score: %s\n" % str(np.median(rewards[:,agent_idx]))
-        results += "\t\tMin Score: %s\n" % str(np.min(rewards[:,agent_idx]))
-        results += "\t\tMax Score: %s\n" % str(np.max(rewards[:,agent_idx]))
-    # runtime
+        results += "\t\tAverage Score: %s\n" % str(np.average(scores[:,agent_idx]))
+        results += "\t\tMedian Score: %s\n" % str(np.median(scores[:,agent_idx]))
+        results += "\t\tMin Score: %s\n" % str(np.min(scores[:,agent_idx]))
+        results += "\t\tMax Score: %s\n" % str(np.max(scores[:,agent_idx]))
+        results += "\t\tAverage Reward: %s\n" % str(np.average(rewards[:,agent_idx]))
+        results += "\t\tMedian Reward: %s\n" % str(np.median(rewards[:,agent_idx]))
+        results += "\t\tMin Reward: %s\n" % str(np.min(rewards[:,agent_idx]))
+        results += "\t\tMax Reward: %s\n" % str(np.max(rewards[:,agent_idx]))    # runtime
     if runtime is None:
         pass
     elif runtime > 3600:
@@ -274,7 +283,7 @@ if __name__ == "__main__":
     if args.debug: pprint(args)
     # Execute game
     starttime = time.time()
-    rewards = playSuspicion(
+    scores, rewards = playSuspicion(
         agents = args.agents,
         gui = args.gui,
         episodes = args.episodes,
@@ -282,4 +291,4 @@ if __name__ == "__main__":
     )
     runtime = time.time() - starttime
     # Output
-    print(getResults(args.agents, rewards, runtime, args.debug))
+    print(getResults(args.agents, scores, rewards, runtime, args.debug))
