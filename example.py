@@ -198,14 +198,13 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
         first_unplayed = np.where(sums == 0)[0][0] # All completed games have points - at least gem takes to end game
         scores = scores[0:first_unplayed]
         rewards = rewards[0:first_unplayed]
-    # Save Agent Weights
-    for agent in agents:
-        try:
-            agent.save_weights()
-        except:
-            pass
     # Cleanup
     time.sleep(5)
+    for agent in agents:
+        try:
+            agent.close()
+        except:
+            pass
     susEnv.close()
     # Return
     return scores, rewards

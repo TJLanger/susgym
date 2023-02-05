@@ -29,6 +29,9 @@
 # Testing
 import unittest
 
+# OpenAI gym
+import gym
+
 # Other
 import numpy as np
 
@@ -41,6 +44,31 @@ from pprint import pprint
 ## Subroutines
 ################################################################################
 ################################################################################
+
+"""
+description:
+-> returns 2d array of form arr[roomx][roomy] = [gems boolean]
+parameters:
+-> No Params
+return:
+-> room_gems: array of boolean indicators
+"""
+def get_room_gems():
+    # Shape of X, Y, [Red, Green, Yellow]
+    board = np.zeros((4,3,3), dtype=np.int8)
+    board[0][0][0:3] = [1, 0, 1]
+    board[1][0][0:3] = [0, 1, 0]
+    board[2][0][0:3] = [1, 1, 0]
+    board[3][0][0:3] = [0, 1, 1]
+    board[0][1][0:3] = [0, 1, 1]
+    board[1][1][0:3] = [1, 1, 0]
+    board[2][1][0:3] = [1, 0, 1]
+    board[3][1][0:3] = [0, 0, 1]
+    board[0][2][0:3] = [1, 0, 0]
+    board[1][2][0:3] = [1, 0, 1]
+    board[2][2][0:3] = [0, 1, 1]
+    board[3][2][0:3] = [1, 1, 0]
+    return board
 
 """
 description:
@@ -110,28 +138,122 @@ def decode_state(state, num_characters=10):
 
 """
 description:
--> returns 2d array of form arr[roomx][roomy] = [gems boolean]
+-> returns 2D numpy array with all possible actions for act_space, prefixed by valid boolean flag
+-> doesnt roll out all combos of opponent guesses, too many possiblities, and shouldnt be relevant to network
+-> uses game knowledge to not roll out duplicate choices (multiple target values for same gem/opponent)
 parameters:
--> No Params
+-> act_space: Gym environment action space, type MutliDiscrete
+-> state: numpy array representing state
+-> num_player:
 return:
--> room_gems: array of boolean indicators
+-> actions: 2D numpy array of form [[0/1,action],[0/1,action],...]
 """
-def get_room_gems():
-    # Shape of X, Y, [Red, Green, Yellow]
-    board = np.zeros((4,3,3), dtype=np.int8)
-    board[0][0][0:3] = [1, 0, 1]
-    board[1][0][0:3] = [0, 1, 0]
-    board[2][0][0:3] = [1, 1, 0]
-    board[3][0][0:3] = [0, 1, 1]
-    board[0][1][0:3] = [0, 1, 1]
-    board[1][1][0:3] = [1, 1, 0]
-    board[2][1][0:3] = [1, 0, 1]
-    board[3][1][0:3] = [0, 0, 1]
-    board[0][2][0:3] = [1, 0, 0]
-    board[1][2][0:3] = [1, 0, 1]
-    board[2][2][0:3] = [0, 1, 1]
-    board[3][2][0:3] = [1, 1, 0]
-    return board
+def get_valid_actions(act_space: gym.spaces.MultiDiscrete, state: np.ndarray, num_players: int) -> np.ndarray:
+    # Setup
+    act_size, state_size = len(act_space.nvec), len(state)
+    char_loc_start = 1 + 3*(num_players+1)
+    die_start = char_loc_start + 2*10
+    card_start = die_start + 3
+
+    no = num_players - 1 # num_opponent
+    card_act_sizes = [120, 1,1,1, 3, 1, no,no,no,no,no,no,no,no,no,no]# trapdoor getRedGem getGreen getYellow getRoom viewDeck 10xaskCharacter (Alphabetical)
+
+    # State Checks
+    die1_chars = 10 if state[die_start] == 10 else 1 # number of chars to rollout for die1
+    die2_chars = 10 if state[die_start+1] == 10 else 1
+    card_acts = np.zeros((2,2), dtype=np.int8)
+    card_acts[0] = np.where(state[card_start:card_start+16] == 1)[0]
+    card_acts[1] = np.where(state[card_start+16:card_start+16+16] == 1)[0]
+
+    # Card Rollouts
+    rtn = []
+    for card_idx in range(2):
+        # Setup
+        rollout = [die1_chars,4,die2_chars,4,1,2,card_act_sizes[card_acts[card_idx][0]],card_act_sizes[card_acts[card_idx][1]]]
+        # Calc Num Actions
+        act_len = 1
+        for size in rollout:
+            act_len *= size
+        # Create Array
+        actions = np.zeros((act_len,1+act_size+state_size), dtype=np.float64)
+        actions[:,0] = 1 # Default all actions to valid
+        write_idx = 1 # Skip boolean valid/invalid flag preceding action
+        write_size = act_len
+        for size in rollout:
+            # Create Overwrite
+            ovr = np.tile(np.repeat(np.array([x for x in range(size)], dtype=np.int16), int(write_size/size)), int(act_len/write_size))
+            actions[:,write_idx] = ovr.T
+            # Updates
+            write_idx += 1
+            write_size /= size
+        # State Specific Values
+        if die1_chars == 1: actions[:,1+0] = state[die_start]
+        if die2_chars == 1: actions[:,1+2] = state[die_start+1]
+        actions[:,1+4] = card_idx
+        actions[:,1+6] += 0.5
+        actions[:,1+7] += 0.5
+        actions[:,1+6] *= int(120/rollout[6])
+        actions[:,1+7] *= int(6/rollout[7])
+        actions = actions.astype(np.int16)
+        # Extend with State Copies
+        actions[:,1+act_size:] = np.repeat(state[np.newaxis,:], act_len, axis=0)
+        ### Validate Character Direction, Die Roll 1
+        valid = np.where(np.any([
+            ((actions[:,2] == 0) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,1]+1] < 2)), # Up
+            ((actions[:,2] == 1) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,1]+1] > 0)),  # Down
+            ((actions[:,2] == 2) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,1]] < 3)), # Right
+            ((actions[:,2] == 3) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,1]] > 0)) # Left
+        ], axis=0), 1, 0)
+        actions[:,0] = np.minimum(actions[:,0],valid.T)
+        ### State Update (applied regardless of if valid)
+        for update in ((0,1,1),(1,1,-1),(2,0,1),(3,0,-1),): # up:(dir=0,x/y=1,delta=1), down:(dir=1,x/y=1,delta=-1)
+            update_idx = np.where(actions[:,2] == update[0])
+            actions[update_idx,1+act_size+char_loc_start+2*actions[update_idx,1]+update[1]] += update[2]
+        ### Character Direction, Die Roll 2
+        valid = np.where(np.any([
+            ((actions[:,4] == 0) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,3]+1] < 2)), # Up
+            ((actions[:,4] == 1) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,3]+1] > 0)), # Down
+            ((actions[:,4] == 2) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,3]] < 3)), # Right
+            ((actions[:,4] == 3) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,3]] > 0)) # Left
+        ], axis=0), 1, 0)
+        actions[:,0] = np.minimum(actions[:,0],valid.T)
+        ### State Update (applied regardless of if valid)
+        for update in ((0,1,1),(1,1,-1),(2,0,1),(3,0,-1),): # up:(dir=0,x/y=1,delta=1), down:(dir=1,x/y=1,delta=-1)
+            update_idx = np.where(actions[:,4] == update[0])
+            actions[update_idx,1+act_size+char_loc_start+2*actions[update_idx,3]+update[1]] += update[2]
+        ### Trapdoor State Update iff act_order==0 (else TD after gem takes - irrelevant/all valid)
+        td_updates = np.where((actions[:,1+act_size+card_start+16*card_idx] == 1) & (actions[:,1+5] == 0))
+        char_updates = actions[td_updates,1+6] // 12 # floor divide by number of rooms = target character
+        td_rooms = actions[td_updates,1+6] % 12 # modulus by number of rooms to get room number
+        actions[td_updates,1+act_size+char_loc_start+2*char_updates] = td_rooms // 3 # new room x is floor divide of room number and board height
+        actions[td_updates,1+act_size+char_loc_start+2*char_updates+1] = td_rooms % 3 # new room y is modulus of room number and board height
+        ### Room Gem takes
+        rooms = (
+            (0,0,[0,2]),
+            (1,0,[1]),
+            (2,0,[0,1]),
+            (3,0,[1,2]),
+            (0,1,[1,2]),
+            (1,1,[0,1]),
+            (2,1,[0,2]),
+            (3,1,[2]),
+            (0,2,[0]),
+            (1,2,[0,2]),
+            (2,2,[1,2]),
+            (3,2,[0,1]),
+        )
+        for room in rooms: # tuple of (room_x, room_y, valid_gem)
+            room_matches = np.where((actions[:,1+act_size+card_start+16*card_idx+4] == 1) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,1+act_size+die_start+2]] == room[0]) & (actions[np.arange(act_len)[:],1+act_size+char_loc_start+2*actions[:,1+act_size+die_start+2]+1] == room[1]))[0] # using room card, and in room
+            if len(room_matches) == 0: continue
+            valid_rooms = np.where(np.any([
+                ((np.sum(actions[room_matches,1+act_size+card_start+16*card_idx:1+act_size+card_start+16*card_idx+4], axis=1) == 0) & (np.isin(3*actions[room_matches,1+6] // 120, room[2]))), # Room gem first
+                ((np.sum(actions[room_matches,1+act_size+card_start+16*card_idx:1+act_size+card_start+16*card_idx+4], axis=1) > 0) & (np.isin(3*actions[room_matches,1+7] // 6, room[2]))), # Room gem second
+            ], axis=0), 1, 0)
+            actions[room_matches,0] = np.minimum(actions[room_matches,0],valid_rooms.T)
+        # Save
+        rtn.append(actions[np.where(actions[:,0]==1)[0],1:1+act_size]) # Dropping prefix valid/invalid column on return
+    # Return
+    return np.concatenate(rtn, axis=0)
 
 """
 description:
@@ -454,6 +576,9 @@ class susAgent():
         act_order = np.random.randint(0, 2)
         randActComp_actCards(decoded_state, action, act_card_idx, act_order, self.num_characters)
 
+    def close(self): # Agent cleanup
+        pass
+
 
 
 ################################################################################
@@ -464,10 +589,16 @@ class susAgent():
 
 """
 description:
+-> Action Rollout (of valid) Testing
+"""
+class TestActRollout(unittest.TestCase):
+    pass # TODO: based on state(s), manually calc possibilities, multiply, and verify lengths match up
+
+"""
+description:
 -> ReplayBuffer Testing
 """
-class TestReplayBuffer(unittest.TestCase):
-    # Runs prior to each test
+class TestReplayBuffer(unittest.TestCase):    # Runs prior to each test
     def setUp(self):
         self.cap = 1000 # Buffer capacity
         self.bs = 8 # Buffer batch size
