@@ -48,6 +48,7 @@ import random
 
 # Debug
 from pprint import pprint
+import time
 
 
 ################################################################################
@@ -97,7 +98,154 @@ def randValidGuess(dstate, act):
 
 """
 description:
--> RL based agent, epsilon-greedy choice between DDPG network or stochastic (valid) actions
+-> RL based agent, epsilon-greedy choice between Q network or stochastic (valid) actions
+"""
+class nfqSusAgent(agent_helpers.susAgent):
+    def __init__(self, eps=0.1, lr=0.001, gamma=0.99, tau=1, batch_size=64):
+        # Parent Setup
+        super().__init__()
+        # Basic Setup
+        self.curr_state, self.curr_action = None, None
+        self.num_players = None
+        self.act_space = None
+        # Model Parameters
+        self.eps = eps # Explore/Exploit rate (epsilon)
+        self.lr = lr # Learning rate (for network training)
+        self.gamma = gamma # Discount rate (gamma) for future reward scaling
+        self.tau = tau # Target update rate (tau) for policy to target network updates
+        # Models
+        self.batch_size = batch_size
+        self.replay_memory = agent_helpers.ReplayBuffer(batch_size=self.batch_size) # list of [state, action, reward, new state, terminal]
+        self.optimizer = tf.keras.optimizers.Adam(self.lr)
+        self.nfq, self.target_nfq = None, None # created on first action select (need act/obs spaces)
+        # Functionality Controls
+        self.train = False # True => e-greedy, update network; False => 'optimal' actions only
+        # Debug Timing
+        self.times = {"train":0.,"act_roll":0.,"buffer":0.,"tensor":0.,"":0.,"":0.,"":0.,}
+
+    def update(self, next_state, reward, done, info):
+        # Parent
+        super().update(next_state, reward, done, info)
+        # Generate Batch
+        t1 = time.time()
+        if self.train and len(self.replay_memory) > self.batch_size:
+            t2 = time.time()
+            batch_states, batch_actions, batch_rewards, batch_next_states = self.replay_memory.sample()
+            self.times["buffer"] += time.time() - t2
+            t3 = time.time()
+            batch_states = tf.convert_to_tensor(batch_states)
+            batch_actions = tf.convert_to_tensor(batch_actions)
+            batch_rewards = tf.convert_to_tensor(batch_rewards)
+            batch_next_states = tf.convert_to_tensor(batch_next_states)
+            self.times["tensor"] += time.time() - t3
+            batch_next_actions = tf.convert_to_tesnor(self._nfq_action(state) for state in batch_next_states)
+            self._learn(batch_states, batch_actions, batch_rewards, batch_next_states, batch_next_actions)
+        self.times["train"] += time.time() - t1
+
+    def reset(self):
+        # Basic
+        super().reset()
+        # Model Setup
+        if self.nfq is not None:
+            update_target(self.target_nfq.variables, self.nfq.variables, self.tau)
+
+    def close(self):
+        pprint(self.times)
+        if self.train and False:
+            self.nfq.save_weights('./checkpoints/nfq')
+        else:
+            pass
+
+    def pick_action(self, state, act_space, obs_space):
+        # Setup
+        action = np.zeros(act_space.shape, dtype=np.int8)
+        # Network Setup
+        if self.act_space is None:
+            self.act_space = act_space
+        if self.nfq is None:
+            self._create_models(act_space, obs_space)
+        # Action Creation
+        if np.any(state[1:4] == 0): # Update to check non-decoded state (RL agent deosnt decode unless needed)
+            # Deocde State
+            dstate = agent_helpers.decode_state(state, self.num_characters)
+            # Character Identity Guesses
+            self._act_charGuess(dstate, action, act_space, obs_space)
+        else:
+            if self.train and np.random.rand() <= self.eps: # Explore (random move selection) - Disable for trained results testing
+                # Deocde State
+                dstate = agent_helpers.decode_state(state, self.num_characters)
+                # Character Die Moves
+                self._act_dieMove(dstate, action, act_space, obs_space)
+                # Action Card Selection
+                self._act_actCards(dstate, action, act_space, obs_space)
+            else: # Exploit (select action based on network q-values)
+                # Setup
+                if self.num_players is None:
+                    dstate = agent_helpers.decode_state(state, self.num_characters)
+                    self.num_players = dstate["num_players"]
+                # Evaluate All Actions, choose optimal
+                action = self._nfq_action(state)
+        # Return
+        self.curr_state, self.curr_action = state, action # Track for replay buffer saves in update method
+        return action
+
+    def _act_charGuess(self, decoded_state, action, act_space, obs_space):
+        randValidGuess(decoded_state, action)
+
+    def _nfq_action(self, state):
+        t1 = time.time()
+        valid_acts = agent_helpers.get_valid_actions(self.act_space, state, self.num_players)
+        self.times["act_roll"] += time.time() - t1
+        states = np.repeat(state[np.newaxis,:], len(valid_acts), axis=0)
+        act_values = self.nfq([states, valid_acts], training=False)
+        return np.copy(valid_acts[np.argmax(act_values)])
+
+    @tf.function # Decorated as Tensorflow function for execution optimization
+    def _learn(self, batch_states, batch_actions, batch_rewards, batch_next_states, batch_next_actions):
+        # Update NFQ
+        with tf.GradientTape() as tape:
+            next_rewards = self.target_nfq.predict([batch_next_states, batch_next_actions])
+            next_qs = batch_rewards + self.gamma*next_rewards
+            qs = self.nfq([batch_states, batch_actions])
+            loss = tf.math.reduce_mean(tf.math.square(next_qs - qs))
+
+        grad = tape.gradient(loss, self.nfq.trainable_variables)
+        self.optimizer.apply_gradients(zip(grad, self.nfq.trainable_variables))
+
+    def _create_models(self, act_space, obs_space):
+        # Setup
+        hidden_layers = 7
+        input_size = obs_space.shape[0] + act_space.shape[0]
+        # Normalization Setup
+        act_norm_data = np.zeros((2, act_space.shape[0]), dtype=np.float32)
+        act_norm_data[1] = act_space.nvec - 1 # Gym MultiDiscrete n vector is not inclusive (n = max + 1)
+        obs_norm_data = np.zeros((2, obs_space.shape[0]), dtype=np.float32)
+        obs_norm_data[1] = obs_space.nvec - 1 # Gym MultiDiscrete n vector is not inclusive (n = max + 1)
+        norm = layers.Normalization()
+        norm.adapt(np.concatenate((obs_norm_data, act_norm_data), axis=1)) # Seed mean/stddev for Normalization with full range of data
+        # Create Models
+        hidden_step = 0 #int(input_size/hidden_layers)
+        input_state = layers.Input(shape=(obs_space.shape[0]))
+        input_act = layers.Input(shape=(act_space.shape[0]))
+        concat = layers.Concatenate()([input_state, input_act])
+        norm_concat = norm(concat)
+        prev_layer = norm_concat
+        for i in range(0, hidden_layers):
+            outputs = layers.Dense(input_size - i*hidden_step, activation="relu")(prev_layer)
+            prev_layer = outputs
+        outputs = layers.Dense(1, activation="sigmoid")(outputs)
+        outputs = 20*outputs - 10 # scale/shift to -10/+10
+        self.nfq = tf.keras.Model([input_state, input_act], outputs)
+        # print("NFQ Model:")
+        # print(self.nfq.summary())
+        # Load Weights
+        self.nfq.load_weights('./checkpoints/nfq')
+        # Copy Policy to Target
+        self.target_nfq = tf.keras.models.clone_model(self.nfq)
+
+"""
+description:
+-> RL based agent, epsilon-greedy choice between DDPG networks or stochastic (valid) actions
 """
 class ddpgSusAgent(agent_helpers.susAgent):
     def __init__(self, eps=0.1, lr=0.01, gamma=0.99, tau=1, batch_size=64):
@@ -119,7 +267,7 @@ class ddpgSusAgent(agent_helpers.susAgent):
         self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
         self.critic, self.target_critic = None, None # created on first action select (need act/obs spaces)
         # Functionality Controls
-        self.train = False # True => e-greedy, update network; False => 'optimal' actions only
+        self.train = True # True => e-greedy, update network; False => 'optimal' actions only
 
     def update(self, next_state, reward, done, info):
         # Parent
@@ -145,10 +293,10 @@ class ddpgSusAgent(agent_helpers.susAgent):
             update_target(self.target_actor.variables, self.actor.variables, self.tau)
             update_target(self.target_critic.variables, self.critic.variables, self.tau)
 
-    def save_weights(self):
-        if self.train and False:
-            self.actor.save_weights('./checkpoints/ddpg_actor3')
-            self.critic.save_weights('./checkpoints/ddpg_critic3')
+    def close(self):
+        if self.train and True:
+            self.actor.save_weights('./checkpoints/ddpg_actor')
+            self.critic.save_weights('./checkpoints/ddpg_critic')
         else:
             pass
 
@@ -263,8 +411,8 @@ class ddpgSusAgent(agent_helpers.susAgent):
         # print(self.critic.summary())
 
         # Load Weights
-        # self.actor.load_weights('./checkpoints/ddpg_actor3')
-        # self.critic.load_weights('./checkpoints/ddpg_critic3')
+        self.actor.load_weights('./checkpoints/ddpg_actor')
+        self.critic.load_weights('./checkpoints/ddpg_critic')
 
         # Copy Policy to Target
         self.target_actor = tf.keras.models.clone_model(self.actor)
