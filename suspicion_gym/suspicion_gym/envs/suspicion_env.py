@@ -132,6 +132,7 @@ class SuspicionEnv(gym.Env):
 
     def step(self, action):
         # Setup
+        info = {}
         # Validate Action
         if not self.action_space.contains(action):
             raise Exception("Out of Space Action (%s)" % str(action)) # error out -> didnt meet act space rules
@@ -142,6 +143,17 @@ class SuspicionEnv(gym.Env):
         # Perform Action
         reward, done = self._apply_action(action) # Also modifies state (in place)
         self._personalize_state(self.__state) # Update state with new cards/knowledge (for render - prior to turn update)
+        # Add Opponent Character IDs to Info, if game is over (For Guess Training)
+        if done:
+            info["character_ids"] = []
+            for pidx in range(1, self.__num_players):
+                # Determine Offset Idx for Opponent
+                off_idx = pidx - 1
+                # Determine True Opponent Idx
+                opp_idx = self.__player_turn + pidx
+                if opp_idx >= self.__num_players: opp_idx -= self.__num_players
+                # Save
+                info["character_ids"].append(self.__charAssigns[opp_idx])
         # Other ENV Updates
         self.__player_turn = self.__player_turn + 1 if self.__player_turn < self.__num_players - 1 else 0
         state_idx = 1 + 3 + 3*self.__num_players + 2*self.__dynSus_numCharacters # Invite idx, bank/player gems, character locations, then die rolls
@@ -154,7 +166,6 @@ class SuspicionEnv(gym.Env):
                 self.__state[state_idx] = self.__die2_lup[roll]
             state_idx += 1
         # Return
-        info = {}
         return self.__state.copy(), reward, done, info
 
     def render(self, mode="human",):
