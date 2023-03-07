@@ -136,12 +136,11 @@ def playSuspicion(agents, gui=False, episodes=1, debug=False):
     # setup
     gui_size = 1000 if gui else None
     max_step = None
+    scores = np.zeros((episodes,len(agents)), dtype=np.int64)
+    rewards = np.zeros((episodes,len(agents)), dtype=np.float64) # float to allow future partial rewards
     # create env
     susEnv = gym.make("Suspicion-v1", num_players=len(agents),
         gui_size=gui_size, gui_delay=1, debug=debug)
-    # create agents
-    scores = np.zeros((episodes,len(agents)), dtype=np.int64)
-    rewards = np.zeros((episodes,len(agents)), dtype=np.float64) # float to allow future partial rewards
     # loop epochs
     try:
         for episode in range(episodes):
