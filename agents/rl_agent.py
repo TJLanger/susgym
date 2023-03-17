@@ -254,14 +254,14 @@ class nfqSusAgent(agent_helpers.susAgent):
             update_target(self.target_nfq.variables, self.nfq.variables, self.tau)
 
     def close(self):
-        pprint(self.times)
-        pprint("Typical Valid Acts:")
-        pprint("    Min: %s" % str(np.min(self.num_valid_acts)))
-        pprint("    Max: %s" % str(np.max(self.num_valid_acts)))
-        pprint("    Med: %s" % str(np.median(self.num_valid_acts)))
-        pprint("    Avg: %s" % str(np.average(self.num_valid_acts)))
-        if self.train and True:
-            self.nfq.save_weights('./checkpoints/nfq5')
+        # pprint(self.times)
+        # pprint("Typical Valid Acts:")
+        # pprint("    Min: %s" % str(np.min(self.num_valid_acts)))
+        # pprint("    Max: %s" % str(np.max(self.num_valid_acts)))
+        # pprint("    Med: %s" % str(np.median(self.num_valid_acts)))
+        # pprint("    Avg: %s" % str(np.average(self.num_valid_acts)))
+        if self.train and False:
+            self.nfq.save_weights('./checkpoints/nfq')
         else:
             pass
 
@@ -349,7 +349,7 @@ class nfqSusAgent(agent_helpers.susAgent):
         # print("NFQ Model:")
         # print(self.nfq.summary())
         # Load Weights
-        self.nfq.load_weights('./checkpoints/nfq4')
+        # self.nfq.load_weights('./checkpoints/nfq')
         # Copy Policy to Target
         self.target_nfq = tf.keras.models.clone_model(self.nfq)
 
@@ -404,7 +404,7 @@ class ddpgSusAgent(agent_helpers.susAgent):
             update_target(self.target_critic.variables, self.critic.variables, self.tau)
 
     def close(self):
-        if self.train and True:
+        if self.train and False:
             self.actor.save_weights('./checkpoints/ddpg_actor')
             self.critic.save_weights('./checkpoints/ddpg_critic')
         else:
@@ -521,8 +521,8 @@ class ddpgSusAgent(agent_helpers.susAgent):
         # print(self.critic.summary())
 
         # Load Weights
-        self.actor.load_weights('./checkpoints/ddpg_actor')
-        self.critic.load_weights('./checkpoints/ddpg_critic')
+        # self.actor.load_weights('./checkpoints/ddpg_actor')
+        # self.critic.load_weights('./checkpoints/ddpg_critic')
 
         # Copy Policy to Target
         self.target_actor = tf.keras.models.clone_model(self.actor)
