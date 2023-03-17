@@ -35,3 +35,14 @@ while True:
     if all_agents_done:
         break
 ```
+
+### Example Commands: example.py
+```
+./example.py -n 4 -e 10 +g
+./example.py -n 4 -a agents.int_agent.validGuessSusAgent agents.rl_agent.ddpgSusAgent
+./example.py -a agentFile.txt -e 1000
+```
+- '--num_players', '-n': Number of players in the game
+- '--episodes', '-e': Number of games to play, reporting tournament (overall) results
+- '++gui', '+g': Flag to enable graphical representation for viewing
+- '--agents', '-a': Space separated list of agent module paths, or text file containing agent module paths
