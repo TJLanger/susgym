@@ -14,7 +14,7 @@ A set of shared functionality for faster agent development, and a generic base a
 
 ### General Classes
 - ReplayBuffer: Buffer for storing state/action/reward/state' tuples
-    -  __init__(capacity, batch): Instantiate, setting max size and size of batch to be retrieved
+    -  `__init__`(capacity, batch): Instantiate, setting max size and size of batch to be retrieved
     - store(obs_tuple): Insert tuple containing (state, action, reward, next_state) into buffer
     - sample(): Stochastically sample and return a batch of data
     - biased_sample(bias): Stochastically sample a batch of data, with a percentage focused on recent entries
